@@ -1,15 +1,15 @@
 {
   "name": "ship_digitaltwin",
   "version": "1.0.0",
-  "main": "FXAAShader.js",
+  "main": "server.js",
   "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1",
-    "start": "node server.js"
+    "start": "node server.js",
+    "dev": "node server.js"
   },
   "keywords": [],
   "author": "",
   "license": "ISC",
-  "description": "",
+  "description": "Ship digital twin dashboard — static UI on Vercel, live camera via local Node server",
   "dependencies": {
     "cors": "^2.8.5",
     "express": "^5.2.1"

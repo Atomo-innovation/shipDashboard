@@ -203,7 +203,7 @@ process.on('SIGINT', () => {
 });
 
 // Start Server
-const PORT = 3006;
+const PORT = process.env.PORT || 3006;
 server.listen(PORT, () => {
   console.log(`🚀 Ship Camera Server on http://localhost:${PORT}`);
   console.log(`📹 Stream API ready. Use RTSP: rtsp://your-corner-camera`);
