@@ -1,0 +1,2362 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Realistic Cargo Ship Digital Twin - Dubai Project</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            overflow: hidden;
+            background: #0a0f14;
+        }
+
+        #container {
+            width: 100vw;
+            height: 100vh;
+        }
+
+        #loading {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            color: white;
+            font-size: 24px;
+            text-align: center;
+            z-index: 1000;
+        }
+
+        .spinner {
+            border: 4px solid rgba(255, 255, 255, 0.1);
+            border-top: 4px solid #4a9eff;
+            border-radius: 50%;
+            width: 50px;
+            height: 50px;
+            animation: spin 1s linear infinite;
+            margin: 20px auto;
+        }
+
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+
+        body.embed-mode #info { display: none !important; }
+    </style>
+    <script src="https://cdn.jsdelivr.net/npm/hls.js@latest"></script> <!-- For HLS video player -->
+</head>
+<body>
+    <div id="container"></div>
+    
+    <div id="info">
+        <h2>🚢 Professional Cargo Ship Digital Twin</h2>
+        <p><strong>Length:</strong> 180 meters</p>
+        <p><strong>Containers:</strong> 140+ TEU</p>
+        <p><strong>Type:</strong> Feeder Vessel</p>
+        <p style="margin-top: 10px; font-size: 12px; opacity: 0.7;">
+            Mouse: Orbit | Scroll: Zoom | Right-click: Pan
+        </p>
+    </div>
+
+    <div id="loading">
+        <div class="spinner"></div>
+        <p>Loading Cargo Ship...</p>
+    </div>
+
+    <script type="importmap">
+    {
+        "imports": {
+            "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
+            "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/"
+        }
+    }
+    </script>
+
+    <script type="module">
+        // --- STUBS TO FIX BUTTON ERRORS ---
+
+    // NEW: Global for clickable objects (raycaster)
+    window.raycasterObjects = [];
+        function viewEngineRoom() {
+    // Position inside mid-right, eye-level for full engine/cylinders/pipes view
+    camera.position.set(
+        -30 + 8, // Inside right wall (-22, sees main engine/gauges)
+        -12 + 8, // Eye level in tall room ( -4)
+        0 + 4    // Slight front offset (4, angled to catwalk)
+    );
+    controls.target.set(-30, -12 + 7.5, 0); // Room center
+    controls.minDistance = 80; // Close zoom for cylinder/locker details
+    controls.maxDistance = 100; // Contain to room size (~30x20x15 diag)
+    controls.zoomSpeed = 1.5;
+    controls.dampingFactor = 0.05;
+    controls.maxPolarAngle = Math.PI * 0.95; // Full inside orbit (tall space)
+    controls.update();
+}
+window.viewEngineRoom = viewEngineRoom; // Make global
+        window.viewExterior = function() { alert("Exterior view is not implemented yet."); };
+        import * as THREE from 'three';
+        import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+        import { Water } from 'three/addons/objects/Water.js';
+        import { Sky } from 'three/addons/objects/Sky.js';
+        import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js';
+        import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
+        import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
+        // import { SSAARenderPass } from 'three/addons/postprocessing/SSAARenderPass.js';
+        import { ShaderPass } from 'three/addons/postprocessing/ShaderPass.js';
+
+        // FXAA shader (inline, official)
+        const FXAAShader = {
+            uniforms: {
+                'tDiffuse': { value: null },
+                'resolution': { value: { x: 1 / 1024, y: 1 / 512 } }
+            },
+            vertexShader: `
+                varying vec2 vUv;
+                void main() {
+                    vUv = uv;
+                    gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+                }
+            `,
+            fragmentShader: `
+                #define FXAA_REDUCE_MIN   (1.0/128.0)
+                #define FXAA_REDUCE_MUL   (1.0/8.0)
+                #define FXAA_SPAN_MAX     8.0
+                uniform sampler2D tDiffuse;
+                uniform vec2 resolution;
+                varying vec2 vUv;
+                void main() {
+                    vec3 rgbNW = texture2D(tDiffuse, vUv + (vec2(-1.0, -1.0) * resolution)).xyz;
+                    vec3 rgbNE = texture2D(tDiffuse, vUv + (vec2(1.0, -1.0) * resolution)).xyz;
+                    vec3 rgbSW = texture2D(tDiffuse, vUv + (vec2(-1.0, 1.0) * resolution)).xyz;
+                    vec3 rgbSE = texture2D(tDiffuse, vUv + (vec2(1.0, 1.0) * resolution)).xyz;
+                    vec3 rgbM  = texture2D(tDiffuse, vUv).xyz;
+                    vec3 luma = vec3(0.299, 0.587, 0.114);
+                    float lumaNW = dot(rgbNW, luma);
+                    float lumaNE = dot(rgbNE, luma);
+                    float lumaSW = dot(rgbSW, luma);
+                    float lumaSE = dot(rgbSE, luma);
+                    float lumaM  = dot(rgbM,  luma);
+                    float lumaMin = min(lumaM, min(min(lumaNW, lumaNE), min(lumaSW, lumaSE)));
+                    float lumaMax = max(lumaM, max(max(lumaNW, lumaNE), max(lumaSW, lumaSE)));
+                    vec2 dir;
+                    dir.x = -((lumaNW + lumaNE) - (lumaSW + lumaSE));
+                    dir.y =  ((lumaNW + lumaSW) - (lumaNE + lumaSE));
+                    float dirReduce = max((lumaNW + lumaNE + lumaSW + lumaSE) * (0.25 * FXAA_REDUCE_MUL), FXAA_REDUCE_MIN);
+                    float rcpDirMin = 1.0 / (min(abs(dir.x), abs(dir.y)) + dirReduce);
+                    dir = min(vec2(FXAA_SPAN_MAX, FXAA_SPAN_MAX),
+                              max(vec2(-FXAA_SPAN_MAX, -FXAA_SPAN_MAX), dir * rcpDirMin)) * resolution;
+                    vec3 rgbA = 0.5 * (
+                        texture2D(tDiffuse, vUv + dir * (1.0 / 3.0 - 0.5)).xyz +
+                        texture2D(tDiffuse, vUv + dir * (2.0 / 3.0 - 0.5)).xyz);
+                    vec3 rgbB = rgbA * 0.5 + 0.25 * (
+                        texture2D(tDiffuse, vUv + dir * -0.5).xyz +
+                        texture2D(tDiffuse, vUv + dir * 0.5).xyz);
+                    float lumaB = dot(rgbB, luma);
+                    if ((lumaB < lumaMin) || (lumaB > lumaMax)) {
+                        gl_FragColor = vec4(rgbA, 1.0);
+                    } else {
+                        gl_FragColor = vec4(rgbB, 1.0);
+                    }
+                }
+            `
+        };
+        import { AfterimagePass } from 'three/addons/postprocessing/AfterimagePass.js';
+
+        // Scene Setup
+        let scene, camera, renderer, controls, composer;
+        let ship, water, sky;
+        let clock = new THREE.Clock();
+        
+        // Performance Monitor (Display only, locked to HIGH)
+        let performanceMonitor = {
+            frameCount: 0,
+            lastTime: performance.now(),
+            fps: 60,
+            qualityLevel: 2, // Always HIGH
+            checkInterval: 60
+        };
+
+        function init() {
+            // Scene
+            scene = new THREE.Scene();
+            // ENHANCED ATMOSPHERIC FOG
+            scene.fog = new THREE.FogExp2(0x6a7a8a, 0.00045);
+
+            // ENHANCED CAMERA
+            camera = new THREE.PerspectiveCamera(
+                45,  // Narrower FOV (more cinematic)
+                window.innerWidth / window.innerHeight,
+                1,
+                4000
+            );
+            camera.position.set(280, 90, 220);
+            camera.filmGauge = 35;  // Film camera simulation
+
+            // Renderer (Adaptive Quality)
+            renderer = new THREE.WebGLRenderer({ 
+                antialias: true,
+                powerPreference: "high-performance",
+                stencil: false,
+                depth: true,
+                logarithmicDepthBuffer: false // Better performance
+            });
+            renderer.setSize(window.innerWidth, window.innerHeight);
+            renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2)); // Allow higher quality
+            renderer.shadowMap.enabled = false; // Start disabled, can enable later
+            renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+            renderer.toneMapping = THREE.ACESFilmicToneMapping;
+            renderer.toneMappingExposure = 0.75;
+            renderer.setClearColor(0x4a6075);
+            document.getElementById('container').appendChild(renderer.domElement);
+
+            // Controls
+            controls = new OrbitControls(camera, renderer.domElement);
+            controls.enableDamping = true;
+controls.dampingFactor = 0.15;  // Faster response
+controls.rotateSpeed = 0.5;  // Better rotation control
+controls.zoomSpeed = 1.2;  // Smooth zoom with two fingers
+controls.panSpeed = 0.8;  // Better pan control
+controls.maxPolarAngle = Math.PI * 0.95;  // Almost full vertical rotation
+controls.minDistance = 200;  // Very close zoom
+controls.maxDistance = 500;  // Far zoom
+controls.target.set(0, 12, 0);
+controls.enableZoom = true;
+controls.enablePan = true;
+
+
+
+            // ENHANCED CINEMATIC LIGHTING (Full Quality)
+            const ambientLight = new THREE.AmbientLight(0x7a8a9a, 0.9);
+            scene.add(ambientLight);
+
+            // Main Sun Light (golden hour effect with adaptive shadows)
+            const sunLight = new THREE.DirectionalLight(0xfff4e6, 2.5);
+            sunLight.position.set(200, 180, 150);
+            sunLight.castShadow = false;  // Controlled by adaptive system
+            sunLight.shadow.camera.left = -350;
+            sunLight.shadow.camera.right = 350;
+            sunLight.shadow.camera.top = 350;
+            sunLight.shadow.camera.bottom = -350;
+            sunLight.shadow.camera.near = 0.5;
+            sunLight.shadow.camera.far = 900;
+            sunLight.shadow.mapSize.width = 2048;  // Balanced quality
+            sunLight.shadow.mapSize.height = 2048;
+            sunLight.shadow.bias = -0.0001;
+            sunLight.shadow.radius = 2;
+            scene.add(sunLight);
+            window.sunLight = sunLight; // For adaptive control
+
+            // Rim light (dramatic edge lighting)
+            const rimLight = new THREE.DirectionalLight(0xa8c5e6, 1.2);
+            rimLight.position.set(-150, 100, -120);
+            scene.add(rimLight);
+
+            // Fill light (softer ambient fill)
+            const fillLight = new THREE.DirectionalLight(0x9bb5d0, 0.9);
+            fillLight.position.set(-120, 80, -100);
+            scene.add(fillLight);
+
+            // Hemisphere light (sky + ground bounce)
+            const hemisphereLight = new THREE.HemisphereLight(0x87ceeb, 0x3a4a5a, 1.1);
+            scene.add(hemisphereLight);
+
+            // Volumetric atmosphere glow (subtle)
+            const atmosphereLight = new THREE.PointLight(0xffffff, 0.3, 500);
+            atmosphereLight.position.set(0, 100, 0);
+            scene.add(atmosphereLight);
+
+            // ENHANCED REALISTIC OCEAN (Adaptive High Quality)
+            const waterGeometry = new THREE.PlaneGeometry(12000, 12000, 8, 8); // Even lower segments for more performance
+            water = new Water(waterGeometry, {
+                textureWidth: 256,  // Lower resolution for more performance
+                textureHeight: 256,
+                waterNormals: new THREE.TextureLoader().load(
+                    'https://threejs.org/examples/textures/waternormals.jpg',
+                    (texture) => {
+                        texture.wrapS = texture.wrapT = THREE.RepeatWrapping;
+                        texture.minFilter = THREE.LinearFilter;
+                    }
+                ),
+                sunDirection: new THREE.Vector3(),
+                sunColor: 0xffffff,
+                waterColor: 0x1a3a52,  // Deeper blue
+                distortionScale: 5.5,  // More wave distortion
+                fog: scene.fog !== undefined,
+                alpha: 0.95  // Slight transparency
+            });
+            water.rotation.x = -Math.PI / 2;
+            water.position.y = -6;
+            water.material.transparent = true;
+            scene.add(water);
+            window.waterGeometry = waterGeometry; // For adaptive control
+
+            // ENHANCED DRAMATIC SKY
+            sky = new Sky();
+            sky.scale.setScalar(6000); // Lower scale for more performance
+            scene.add(sky);
+
+            const skyUniforms = sky.material.uniforms;
+            skyUniforms['turbidity'].value = 12;  // More atmospheric
+            skyUniforms['rayleigh'].value = 2.5;  // Deeper blue
+            skyUniforms['mieCoefficient'].value = 0.008;
+            skyUniforms['mieDirectionalG'].value = 0.85;
+
+            // Golden hour sunset position
+            const parameters = {
+                elevation: 4,  // Low sun (sunset)
+                azimuth: 200   // Sun position angle
+            };
+
+            const pmremGenerator = new THREE.PMREMGenerator(renderer);
+            const phi = THREE.MathUtils.degToRad(90 - parameters.elevation);
+            const theta = THREE.MathUtils.degToRad(parameters.azimuth);
+            const sun = new THREE.Vector3();
+            sun.setFromSphericalCoords(1, phi, theta);
+
+            sky.material.uniforms['sunPosition'].value.copy(sun);
+            water.material.uniforms['sunDirection'].value.copy(sun).normalize();
+
+            // Enhanced environment reflection
+            scene.environment = pmremGenerator.fromScene(sky).texture;
+            pmremGenerator.dispose();
+
+            // Create Ultra-Realistic Ship
+            createRealisticCargoShip();
+
+            // POST-PROCESSING (Adaptive Cinematic Quality)
+            composer = new EffectComposer(renderer);
+
+            // Base render pass
+            const renderPass = new RenderPass(scene, camera);
+            composer.addPass(renderPass);
+
+            // Bloom effect (full quality, adaptive)
+            const bloomPass = new UnrealBloomPass(
+                new THREE.Vector2(window.innerWidth, window.innerHeight),
+                0.18,  // Lower strength for performance
+                0.5,   // Slightly lower radius
+                0.35   // Slightly higher threshold
+            );
+            bloomPass.enabled = true;
+            composer.addPass(bloomPass);
+
+            // Anti-aliasing (SSAA)
+            // Removed SSAA for performance, using FXAA only
+
+            // Add motion blur for cinematic smoothness (optional, can be enabled if needed)
+            // let afterimagePass = new AfterimagePass();
+            // afterimagePass.uniforms['damp'].value = 0.90;
+            // composer.addPass(afterimagePass);
+
+            // Shader pass for FXAA
+            const fxaaPass = new ShaderPass(FXAAShader);
+            fxaaPass.enabled = true;
+            composer.addPass(fxaaPass);
+
+            // Store for adaptive quality control
+            window.bloomPass = bloomPass;
+            window.fxaaPass = fxaaPass;
+
+            // Hide loading
+            document.getElementById('loading').style.display = 'none';
+
+            // Events
+            window.addEventListener('resize', onWindowResize);
+
+            // Start animation
+            animate();
+
+            // ...existing code...
+
+            // 🖱️ IMPROVED CLICK HANDLER - Better Detection
+const domElement = renderer.domElement;
+domElement.addEventListener('click', onMouseClick, false);
+domElement.addEventListener('touchend', onMouseClick, false); // Better mobile support
+
+function onMouseClick(event) {
+    event.preventDefault();
+    const mouse = new THREE.Vector2();
+    const rect = domElement.getBoundingClientRect();
+    const clientX = event.clientX || (event.changedTouches && event.changedTouches[0].clientX);
+    const clientY = event.clientY || (event.changedTouches && event.changedTouches[0].clientY);
+    
+    if (!clientX || !clientY) return; // Invalid click
+    
+    mouse.x = ((clientX - rect.left) / rect.width) * 2 - 1;
+    mouse.y = -((clientY - rect.top) / rect.height) * 2 + 1;
+
+    const raycaster = new THREE.Raycaster();
+    raycaster.setFromCamera(mouse, camera);
+    const intersects = raycaster.intersectObjects(raycasterObjects, true);
+
+    console.log(`🖱️ Click detected: ${intersects.length} objects hit`);
+    
+    if (intersects.length > 0) {
+        const object = intersects[0].object;
+        console.log('Clicked object type:', object.userData.type);
+        
+        if (object.userData.type === 'camera') {
+            console.log('✅ Camera clicked - starting live stream');
+            // Visual feedback - blink LED faster
+            const led = object.parent.userData.recordingLED;
+            if (led) {
+                led.material.emissiveIntensity = 3;
+                setTimeout(() => { led.material.emissiveIntensity = 1.5; }, 300);
+            }
+            startShipStream();
+        }
+    }
+}
+
+            // 📡 STREAM FUNCTION WITH PROPER ERROR HANDLING
+let currentStreamUrl = null;
+let videoModal = null;
+
+function startShipStream() {
+    console.log('🎬 Starting ship camera stream...');
+    
+    if (currentStreamUrl) {
+        console.log('Stream already running, reopening modal...');
+        openStream(currentStreamUrl);
+        return;
+    }
+
+    // ✅ No loading screen - instant open
+
+    fetch('/api/start-stream', {
+        method: 'POST',
+        body: JSON.stringify({ rtspUrl: 'rtsp://admin:admin123456@192.168.1.10:8554/profile0' }), // REPLACE with your RTSP URL
+        headers: { 'Content-Type': 'application/json' }
+    })
+                .then(res => res.json())
+                .then(data => {
+                    if (data.success) {
+                        currentStreamUrl = data.streamUrl;
+                        setTimeout(() => openStream(currentStreamUrl), 1500);
+                    } else {
+                        alert('Stream start failed: ' + data.message);
+                    }
+                })
+                .catch(err => console.error('Stream error:', err));
+            }
+
+            // NEW: Open HLS Video Modal (like office "Live Stream")
+            function openStream(streamUrl) {
+                // Create modal if not exists
+                if (!videoModal) {
+                    videoModal = document.createElement('div');
+                    videoModal.style.cssText = `
+                        position: fixed; top: 0; left: 0; width: 100%; height: 100%; 
+                        background: linear-gradient(135deg, rgba(0,0,0,0.95), rgba(20,30,50,0.95)); 
+                        z-index: 10000;
+                        display: flex; align-items: center; justify-content: center;
+                        backdrop-filter: blur(20px);
+                        animation: fadeIn 0.3s ease;
+                    `;
+                    const video = document.createElement('video');
+                    video.id = 'shipStreamVideo';
+                    video.style.cssText = `
+                        width: 90%; height: 90%; max-width: 1920px; max-height: 1080px;
+                        background: #000; border-radius: 20px; box-shadow: 0 25px 100px rgba(0,0,0,0.8);
+                        border: 2px solid rgba(74, 158, 255, 0.3);
+                    `;
+                    video.controls = true;
+                    video.autoplay = true;
+                    const closeBtn = document.createElement('button');
+                    closeBtn.textContent = 'Close';
+                    closeBtn.style.cssText = `
+                        position: absolute; top: 30px; right: 30px; z-index: 10001; 
+                        padding: 15px 30px; background: linear-gradient(135deg, #ff4444, #cc0000); 
+                        color: white; border: 2px solid rgba(255,255,255,0.2); border-radius: 50px; 
+                        cursor: pointer; font-size: 16px; font-weight: 700; text-transform: uppercase;
+                        box-shadow: 0 10px 30px rgba(255,0,0,0.4);
+                        transition: all 0.3s ease; letter-spacing: 1px;
+                    `;
+                    closeBtn.onmouseover = () => {
+                        closeBtn.style.transform = 'scale(1.1) translateY(-2px)';
+                        closeBtn.style.boxShadow = '0 15px 40px rgba(255,0,0,0.6)';
+                    };
+                    closeBtn.onmouseout = () => {
+                        closeBtn.style.transform = 'scale(1) translateY(0)';
+                        closeBtn.style.boxShadow = '0 10px 30px rgba(255,0,0,0.4)';
+                    };
+                    closeBtn.onclick = () => {
+                        const vid = document.getElementById('shipStreamVideo');
+                        if (vid) vid.pause();
+                        if (videoModal && videoModal.parentNode) {
+                            document.body.removeChild(videoModal);
+                        }
+                        videoModal = null;
+                        // Optional: Stop stream after 10s idle
+                        setTimeout(() => {
+                            if (currentStreamUrl) {
+                                const streamId = currentStreamUrl.split('/')[3]; // e.g., 'ship_camera_123'
+                                fetch('/api/stop-stream', { 
+                                    method: 'POST', 
+                                    body: JSON.stringify({ streamId: streamId }), 
+                                    headers: { 'Content-Type': 'application/json' }
+                                }).catch(err => console.error('Stop stream error:', err));
+                            }
+                        }, 10000);
+                    };
+                    videoModal.appendChild(video);
+                    videoModal.appendChild(closeBtn);
+                    document.body.appendChild(videoModal);
+                }
+
+                // Play with hls.js
+                const video = document.getElementById('shipStreamVideo');
+                if (Hls.isSupported()) {
+                    if (video.hls) video.hls.destroy();
+                    const hls = new Hls({
+                        enableWorker: true,
+                        lowLatencyMode: true,
+                        backBufferLength: 10,
+                        maxBufferLength: 10,
+                        maxMaxBufferLength: 20,
+                        liveSyncDuration: 1,
+                        liveMaxLatencyDuration: 3,
+                        highBufferWatchdogPeriod: 1
+                    });
+                    hls.loadSource(streamUrl);
+                    hls.attachMedia(video);
+                    hls.on(Hls.Events.MANIFEST_PARSED, () => {
+                        video.play().catch(err => console.error('Play error:', err));
+                    });
+                } else if (video.canPlayType('application/vnd.apple.mpegurl')) {
+                    video.src = streamUrl;
+                    video.addEventListener('loadedmetadata', () => {
+                        video.play().catch(err => console.error('Play error:', err));
+                    });
+                }
+            }
+        }
+
+        function createRealisticCargoShip() {
+            ship = new THREE.Group();
+            ship.position.y = 0;
+            ship.scale.set(1.8, 1.8, 1.8);  // Ship ko 1.8x bada kar diya
+
+            // REALISTIC WEATHERED MATERIALS (Brightened for visibility)
+            const weatheredHullMat = new THREE.MeshStandardMaterial({
+                color: 0x3a4550,  // Brighter gray-blue
+                metalness: 0.5,
+                roughness: 0.85,
+                emissive: 0x1a2530,  // Subtle blue glow
+                emissiveIntensity: 0.15  // More visible
+            });
+
+            const rustHullMat = new THREE.MeshStandardMaterial({
+                color: 0x2a3238,  // Lighter dark gray
+                metalness: 0.35,
+                roughness: 0.88,
+                emissive: 0x0f1820,
+                emissiveIntensity: 0.1
+            });
+
+            const deckMat = new THREE.MeshStandardMaterial({
+                color: 0x4a5560,  // Much brighter deck
+                metalness: 0.4,
+                roughness: 0.85,
+                emissive: 0x1a2025,
+                emissiveIntensity: 0.12
+            });
+
+            const waterlineMat = new THREE.MeshStandardMaterial({
+                color: 0x9aabb8,  // Bright waterline stripe
+                metalness: 0.4,
+                roughness: 0.75
+            });
+
+            const bridgeMat = new THREE.MeshStandardMaterial({
+                color: 0xbcc5d0,
+                metalness: 0.35,
+                roughness: 0.8
+            });
+
+            const railingMat = new THREE.MeshStandardMaterial({
+                color: 0x1a1f24,
+                metalness: 0.6,
+                roughness: 0.7
+            });
+
+            // ========== HULL - REALISTIC WEATHERED ==========
+            
+            // Main Hull Body (WIDER + GOOD HEIGHT)
+            const hullGeo = new THREE.BoxGeometry(180, 32, 32);
+            const hull = new THREE.Mesh(hullGeo, weatheredHullMat);
+            hull.position.y = 3;
+            hull.castShadow = true;
+            hull.receiveShadow = true;
+            ship.add(hull);
+
+            // Hull Underwater Section (darker, rust)
+            const hullBottomGeo = new THREE.BoxGeometry(179, 14, 31.5);
+            const hullBottom = new THREE.Mesh(hullBottomGeo, rustHullMat);
+            hullBottom.position.y = -17;
+            hullBottom.castShadow = true;
+            ship.add(hullBottom);
+
+            // Waterline Stripe (light gray/white)
+            const waterlineGeo = new THREE.BoxGeometry(181, 1.5, 32.5);
+            const waterline = new THREE.Mesh(waterlineGeo, waterlineMat);
+            waterline.position.y = -7;
+            ship.add(waterline);
+
+            // BOW - SMOOTH SHARP V-SHAPE
+            
+            // Upper bow (above waterline) - smooth gradual taper
+            for (let i = 0; i < 27; i++) {
+                const width = 32 - i * 0.8;  // Smooth narrowing (27 sections)
+                if (width < 0.4) break;
+                const xPos = 78 + i * 1.3;  // 1.3m slices for balanced smoothness
+                
+                // Upper hull section (thin slices for smooth curve)
+                const upperGeo = new THREE.BoxGeometry(1.3, 22, width);
+                const upper = new THREE.Mesh(upperGeo, weatheredHullMat);
+                upper.position.set(xPos, 8, 0);
+                upper.castShadow = true;
+                ship.add(upper);
+            }
+            
+            // Underwater bow (SMOOTH SHARP V-shape below waterline)
+            for (let i = 0; i < 27; i++) {
+                const width = 31 - i * 1.1;  // Sharp but smooth V underwater
+                if (width < 0.2) break;
+                
+                const xPos = 78 + i * 1.3;  // 1.3m slices for smoothness
+                
+                // Underwater V-section (thin for smooth curve)
+                const underGeo = new THREE.BoxGeometry(1.3, 14, width);
+                const under = new THREE.Mesh(underGeo, rustHullMat);
+                under.position.set(xPos, -10, 0);
+                under.castShadow = true;
+                ship.add(under);
+            }
+            
+            // Bow tip (sharp point)
+            const tipGeo = new THREE.ConeGeometry(0.5, 7, 8);
+            const tip = new THREE.Mesh(tipGeo, weatheredHullMat);
+            tip.rotation.z = -Math.PI / 2;
+            tip.position.set(110, 8, 0);
+            tip.castShadow = true;
+            ship.add(tip);
+
+            // Bow anchor hawse pipes (both sides)
+            for (let side = 0; side < 2; side++) {
+                const hawseGeo = new THREE.CylinderGeometry(1.2, 1.2, 5, 16);
+                const hawseMat = new THREE.MeshStandardMaterial({
+                    color: 0x4a4a4a,  // Brighter gray
+                    metalness: 0.7,
+                    roughness: 0.75,
+                    emissive: 0x1a1a1a,
+                    emissiveIntensity: 0.1
+                });
+                const hawse = new THREE.Mesh(hawseGeo, hawseMat);
+                hawse.rotation.x = Math.PI / 4;
+                hawse.position.set(88, 4, side === 0 ? 13 : -13);
+                ship.add(hawse);
+
+                // Anchor recesses
+                const recessGeo = new THREE.BoxGeometry(5, 8, 5);
+                const recessMat = new THREE.MeshStandardMaterial({
+                    color: 0x3a3a3a,  // Brighter recess
+                    metalness: 0.5,
+                    roughness: 0.9,
+                    emissive: 0x151515,
+                    emissiveIntensity: 0.08
+                });
+                const recess = new THREE.Mesh(recessGeo, recessMat);
+                recess.position.set(85, 3, side === 0 ? 13 : -13);
+                ship.add(recess);
+            }
+
+            // Forecastle deck railings
+            for (let side = 0; side < 2; side++) {
+                const fcrailGeo = new THREE.BoxGeometry(25, 1.2, 0.15);
+                const fcrail = new THREE.Mesh(fcrailGeo, railingMat);
+                fcrail.position.set(82, 23, side === 0 ? 16 : -16);
+                ship.add(fcrail);
+            }
+            // Front forecastle rail
+            const frontFCRailGeo = new THREE.BoxGeometry(0.15, 1.2, 32);
+            const frontFCRail = new THREE.Mesh(frontFCRailGeo, railingMat);
+            frontFCRail.position.set(94, 23, 0);    
+            ship.add(frontFCRail);
+
+            // Bow deck ventilators (on raised forecastle)
+            for (let i = 0; i < 2; i++) {
+                const ventGeo = new THREE.CylinderGeometry(0.8, 1, 2, 16);
+                const ventMat = new THREE.MeshStandardMaterial({
+                    color: 0x5a6570,  // Much brighter metallic
+                    metalness: 0.65,
+                    roughness: 0.65,
+                    emissive: 0x2a3035,
+                    emissiveIntensity: 0.12
+                });
+                const vent = new THREE.Mesh(ventGeo, ventMat);
+                vent.position.set(75 + i * 8, 23.5, 10);
+                ship.add(vent);
+
+                // Vent cowl
+                const cowlGeo = new THREE.ConeGeometry(1.2, 1.5, 16);
+                const cowl = new THREE.Mesh(cowlGeo, ventMat);
+                cowl.position.set(75 + i * 8, 25, 10);
+                ship.add(cowl);
+            }
+
+            // STERN - ULTRA REALISTIC PERFECT FINISHING WITH RAISED POOP DECK
+            
+            // Main stern transom (flat back)
+            const sternGeo = new THREE.BoxGeometry(6, 26, 32);
+            const stern = new THREE.Mesh(sternGeo, weatheredHullMat);
+            stern.position.set(-93, 0, 0);
+            stern.castShadow = true;
+            ship.add(stern);
+
+            // Lower poop deck level
+            const lowerPoopGeo = new THREE.BoxGeometry(18, 8, 32);
+            const lowerPoop = new THREE.Mesh(lowerPoopGeo, weatheredHullMat);
+            lowerPoop.position.set(-86, 17, 0);
+            lowerPoop.castShadow = true;
+            ship.add(lowerPoop);
+
+            // Lower poop deck floor
+            const lowerPoopDeckGeo = new THREE.BoxGeometry(18, 1.5, 32);
+            const lowerPoopDeck = new THREE.Mesh(lowerPoopDeckGeo, deckMat);
+            lowerPoopDeck.position.set(-86, 21.5, 0);
+            lowerPoopDeck.castShadow = true;
+            lowerPoopDeck.receiveShadow = true;
+            ship.add(lowerPoopDeck);
+
+            // Upper poop deck level (highest stern section)
+            const upperPoopGeo = new THREE.BoxGeometry(12, 6, 28);
+            const upperPoop = new THREE.Mesh(upperPoopGeo, weatheredHullMat);
+            upperPoop.position.set(-89, 25, 0);
+            upperPoop.castShadow = true;
+            ship.add(upperPoop);
+
+            // Upper poop deck floor
+            const upperPoopDeckGeo = new THREE.BoxGeometry(12, 1.5, 28);
+            const upperPoopDeck = new THREE.Mesh(upperPoopDeckGeo, deckMat);
+            upperPoopDeck.position.set(-89, 28.5, 0);
+            upperPoopDeck.castShadow = true;
+            upperPoopDeck.receiveShadow = true;
+            ship.add(upperPoopDeck);
+
+            // Stern counter (overhanging section)
+            const counterGeo = new THREE.BoxGeometry(4, 6, 28);
+            const counter = new THREE.Mesh(counterGeo, weatheredHullMat);
+            counter.position.set(-95, 11, 0);
+            counter.castShadow = true;
+            ship.add(counter);
+
+            // Lower poop deck railings
+            for (let side = 0; side < 2; side++) {
+                const railGeo = new THREE.BoxGeometry(18, 1.2, 0.15);
+                const rail = new THREE.Mesh(railGeo, railingMat);
+                rail.position.set(-86, 23, side === 0 ? 16 : -16);
+                ship.add(rail);
+            }
+            
+            // Upper poop deck railings
+            for (let side = 0; side < 2; side++) {
+                const uprailGeo = new THREE.BoxGeometry(12, 1.2, 0.15);
+                const uprail = new THREE.Mesh(uprailGeo, railingMat);
+                uprail.position.set(-89, 30, side === 0 ? 14 : -14);
+                ship.add(uprail);
+            }
+            const backRailGeo = new THREE.BoxGeometry(0.15, 1.2, 28);
+            const backRail = new THREE.Mesh(backRailGeo, railingMat);
+            backRail.position.set(-95, 30, 0);
+            ship.add(backRail);
+
+            // Stern ship name plate (white letters)
+            const sternNameGeo = new THREE.BoxGeometry(0.4, 5, 24);
+            const sternNameMat = new THREE.MeshStandardMaterial({
+                color: 0xffffff,
+                metalness: 0.2,
+                roughness: 0.8
+            });
+            const sternName = new THREE.Mesh(sternNameGeo, sternNameMat);
+            sternName.position.set(-96.5, 7, 0);
+            ship.add(sternName);
+
+            // Stern port registration
+            const portNameGeo = new THREE.BoxGeometry(0.4, 2, 16);
+            const portName = new THREE.Mesh(portNameGeo, sternNameMat);
+            portName.position.set(-96.5, 2, 0);
+            ship.add(portName);
+
+            // Stern mooring cleats/bollards (on lower poop deck)
+            for (let i = 0; i < 4; i++) {
+                const bollardGeo = new THREE.CylinderGeometry(0.6, 0.8, 1.8, 12);
+                const bollardMat = new THREE.MeshStandardMaterial({
+                    color: 0x5a5a5a,  // Brighter gray
+                    metalness: 0.8,
+                    roughness: 0.45,
+                    emissive: 0x2a2a2a,
+                    emissiveIntensity: 0.1
+                });
+                const bollard = new THREE.Mesh(bollardGeo, bollardMat);
+                if (i < 2) {
+                    bollard.position.set(-86, 23, -12 + i * 24);
+                } else {
+                    bollard.position.set(-95, 30, -10 + (i - 2) * 20);
+                }
+                bollard.castShadow = true;
+                ship.add(bollard);
+            }
+
+            // Stern roller fairleads
+            for (let side = 0; side < 2; side++) {
+                const fairleadGeo = new THREE.CylinderGeometry(0.5, 0.5, 3, 16);
+                const fairleadMat = new THREE.MeshStandardMaterial({
+                    color: 0x2a2a2a,
+                    metalness: 0.8,
+                    roughness: 0.4
+                });
+                const fairlead = new THREE.Mesh(fairleadGeo, fairleadMat);
+                fairlead.rotation.x = Math.PI / 2;
+                fairlead.position.set(-94, 13.5, side === 0 ? 14 : -14);
+                ship.add(fairlead);
+            }
+
+            // Stern flag mast
+            const sternFlagMastGeo = new THREE.CylinderGeometry(0.15, 0.2, 14, 12);
+            const sternFlagMastMat = new THREE.MeshStandardMaterial({
+                color: 0xffffff,
+                metalness: 0.7,
+                roughness: 0.4
+            });
+            const sternFlagMast = new THREE.Mesh(sternFlagMastGeo, sternFlagMastMat);
+            sternFlagMast.position.set(-90, 20.5, -13);
+            ship.add(sternFlagMast);
+
+            // National flag
+            const flagGeo = new THREE.PlaneGeometry(5, 3);
+            const flagMat = new THREE.MeshStandardMaterial({
+                color: 0xe8112d,
+                side: THREE.DoubleSide,
+                metalness: 0.1,
+                roughness: 0.9
+            });
+            const flag = new THREE.Mesh(flagGeo, flagMat);
+            flag.position.set(-90, 25, -10.5);
+            ship.add(flag);
+
+            // Stern navigation light (white)
+            const sternLightGeo = new THREE.SphereGeometry(0.4, 16, 16);
+            const sternLightMat = new THREE.MeshStandardMaterial({
+                color: 0xffffff,
+                emissive: 0xffffff,
+                emissiveIntensity: 1.2
+            });
+            const sternLight = new THREE.Mesh(sternLightGeo, sternLightMat);
+            sternLight.position.set(-94, 15, 0);
+            ship.add(sternLight);
+
+            const sternLightSource = new THREE.PointLight(0xffffff, 2, 25);
+            sternLightSource.position.copy(sternLight.position);
+            ship.add(sternLightSource);
+
+            // Stern towing hook
+            const hookGeo = new THREE.TorusGeometry(1.5, 0.4, 12, 16);
+            const hookMat = new THREE.MeshStandardMaterial({
+                color: 0x5a6570,  // Brighter metallic
+                metalness: 0.9,
+                roughness: 0.35,
+                emissive: 0x2a3035,
+                emissiveIntensity: 0.15
+            });
+            const hook = new THREE.Mesh(hookGeo, hookMat);
+            hook.rotation.x = Math.PI / 2;
+            hook.position.set(-92, 13.5, 0);
+            ship.add(hook);
+
+            // Hull weld lines (optimized)
+            for (let i = 0; i < 8; i++) {
+                const weldGeo = new THREE.BoxGeometry(182, 0.15, 33);
+                const weldMat = new THREE.MeshStandardMaterial({
+                    color: 0x3a4550,  // Brighter weld lines
+                    metalness: 0.65,
+                    roughness: 0.75,
+                    emissive: 0x1a2530,
+                    emissiveIntensity: 0.08
+                });
+                const weld = new THREE.Mesh(weldGeo, weldMat);
+                weld.position.y = -18 + i * 3.5;
+                ship.add(weld);
+            }
+
+            // ========== DECK ==========
+            
+            const deckGeo = new THREE.BoxGeometry(178, 1.8, 30);
+            const deck = new THREE.Mesh(deckGeo, deckMat);
+            deck.position.y = 11.5;
+            deck.castShadow = true;
+            deck.receiveShadow = true;
+            ship.add(deck);
+
+            // Deck Cargo Hatches (optimized)
+            for (let i = 0; i < 5; i++) {
+                const hatchGeo = new THREE.BoxGeometry(28, 0.5, 28);
+                const hatchMat = new THREE.MeshStandardMaterial({
+                    color: 0x4a5560,  // Brighter hatches
+                    metalness: 0.5,
+                    roughness: 0.85,
+                    emissive: 0x1a2025,
+                    emissiveIntensity: 0.1
+                });
+                const hatch = new THREE.Mesh(hatchGeo, hatchMat);
+                hatch.position.set(-68 + i * 30, 12.5, 0);
+                hatch.receiveShadow = true;
+                ship.add(hatch);
+
+                // Hatch cross beams
+                const beamGeo = new THREE.BoxGeometry(28.5, 0.3, 0.4);
+                const beamMat = new THREE.MeshStandardMaterial({
+                    color: 0x3a4045,  // Brighter beams
+                    metalness: 0.7,
+                    roughness: 0.7
+                });
+                for (let j = 0; j < 3; j++) {
+                    const beam = new THREE.Mesh(beamGeo, beamMat);
+                    beam.position.set(-68 + i * 30, 12.7, -12 + j * 12);
+                    ship.add(beam);
+                }
+            }
+
+            // Deck Railings
+            for (let side = 0; side < 2; side++) {
+                const railGeo = new THREE.BoxGeometry(178, 1, 0.1);
+                const rail = new THREE.Mesh(railGeo, railingMat);
+                rail.position.set(0, 13.5, side === 0 ? 15.5 : -15.5);
+                ship.add(rail);
+
+                // Vertical posts
+                for (let i = 0; i < 30; i++) {
+                    const postGeo = new THREE.BoxGeometry(0.15, 1.5, 0.15);
+                    const post = new THREE.Mesh(postGeo, railingMat);
+                    post.position.set(-85 + i * 6, 13, side === 0 ? 15.5 : -15.5);
+                    ship.add(post);
+                }
+            }
+
+            // ========== CONTAINERS - ULTRA REALISTIC ==========
+            
+            const containerColors = [
+                { base: 0x6b4226, rust: 0x4a2818 },  // Rusty brown
+                { base: 0x2a4d68, rust: 0x1a3548 },  // Dark blue weathered
+                { base: 0x3a4550, rust: 0x2a3540 },  // Gray steel
+                { base: 0x4a342a, rust: 0x3a241a },  // Brown rust
+                { base: 0x1f3a52, rust: 0x0f2a42 },  // Navy blue
+                { base: 0x5a5040, rust: 0x4a4030 }   // Tan weathered
+            ];
+
+            const containerW = 12;
+            const containerH = 8.5;
+            const containerD = 8;
+
+            // Container stacks (realistic loading - ONLY in stern/aft section, clear area around bridge)
+            const stacks = [
+                { rows: 12, x: -75, layers: 2, depth: 2 }  // Top 2 layers visible - real ship style
+            ];
+
+            stacks.forEach(stack => {
+                for (let row = 0; row < stack.rows; row++) {
+                    for (let layer = 0; layer < stack.layers; layer++) {
+                        for (let d = 0; d < stack.depth; d++) {
+                            if (layer === 2 && Math.random() > 0.6) continue; // Fewer top layer
+
+                            const colorSet = containerColors[Math.floor(Math.random() * containerColors.length)];
+                            const containerGeo = new THREE.BoxGeometry(containerW, containerH, containerD);
+                            const containerMat = new THREE.MeshStandardMaterial({
+                                color: colorSet.base,
+                                metalness: 0.45,
+                                roughness: 0.9
+                            });
+                            const container = new THREE.Mesh(containerGeo, containerMat);
+                            
+                            container.position.set(
+                                stack.x + row * (containerW + 0.4),
+                                13 + layer * (containerH + 0.3),
+                                -8 + d * (containerD + 0.4)
+                            );
+                            
+                            container.castShadow = true;
+                            container.receiveShadow = true;
+                            ship.add(container);
+
+                            // Container corrugation (optimized)
+                            for (let r = 0; r < 5; r++) {
+                                const ridgeGeo = new THREE.BoxGeometry(containerW + 0.05, 0.15, containerD + 0.05);
+                                const ridgeMat = new THREE.MeshStandardMaterial({
+                                    color: colorSet.rust,
+                                    metalness: 0.55,
+                                    roughness: 0.95
+                                });
+                                const ridge = new THREE.Mesh(ridgeGeo, ridgeMat);
+                                ridge.position.set(
+                                    container.position.x,
+                                    container.position.y - 3.5 + r * 1.7,
+                                    container.position.z
+                                );
+                                ship.add(ridge);
+                            }
+
+                            // Door with realistic handles
+                            const doorGeo = new THREE.BoxGeometry(containerW - 0.3, containerH - 0.8, 0.25);
+                            const doorMat = new THREE.MeshStandardMaterial({
+                                color: colorSet.rust,
+                                metalness: 0.6,
+                                roughness: 0.9
+                            });
+                            const door = new THREE.Mesh(doorGeo, doorMat);
+                            door.position.set(container.position.x, container.position.y, container.position.z - 4.2);
+                            ship.add(door);
+
+                            // Door lock bars
+                            const lockBarMat = new THREE.MeshStandardMaterial({
+                                color: 0x2a2a2a,
+                                metalness: 0.8,
+                                roughness: 0.6
+                            });
+                            
+                            for (let l = 0; l < 4; l++) {
+                                const lockGeo = new THREE.BoxGeometry(0.25, 1.2, 0.3);
+                                const lock = new THREE.Mesh(lockGeo, lockBarMat);
+                                lock.position.set(
+                                    container.position.x + (l < 2 ? -5.5 : 5.5),
+                                    container.position.y + (l % 2 === 0 ? 2.5 : -2.5),
+                                    container.position.z - 4.4
+                                );
+                                ship.add(lock);
+                            }
+                        }
+                    }
+                }
+            });
+
+            // ========== BRIDGE/SUPERSTRUCTURE (REALISTIC) ==========
+            
+            // Main bridge building
+            const bridgeGeo = new THREE.BoxGeometry(24, 32, 20);
+            const bridge = new THREE.Mesh(bridgeGeo, bridgeMat);
+            bridge.position.set(72, 26, 0);
+            bridge.castShadow = true;
+            bridge.receiveShadow = true;
+            ship.add(bridge);
+
+            // Bridge base (darker lower section)
+            const bridgeBaseGeo = new THREE.BoxGeometry(26, 8, 22);
+            const bridgeBaseMat = new THREE.MeshStandardMaterial({
+                color: 0x3a4550,
+                metalness: 0.4,
+                roughness: 0.9
+            });
+            const bridgeBase = new THREE.Mesh(bridgeBaseGeo, bridgeBaseMat);
+            bridgeBase.position.set(72, 13, 0);
+            bridgeBase.castShadow = true;
+            ship.add(bridgeBase);
+
+            // Bridge levels (horizontal separators)
+            for (let level = 0; level < 6; level++) {
+                const levelGeo = new THREE.BoxGeometry(24.5, 0.4, 20.5);
+                const levelMat = new THREE.MeshStandardMaterial({
+                    color: 0x9aa5b0,
+                    metalness: 0.4,
+                    roughness: 0.8
+                });
+                const levelMesh = new THREE.Mesh(levelGeo, levelMat);
+                levelMesh.position.set(72, 14 + level * 5, 0);
+                ship.add(levelMesh);
+
+                // Outdoor walkway deck around each level (extends beyond bridge walls)
+                const walkwayGeo = new THREE.BoxGeometry(28, 0.3, 24);
+                const walkway = new THREE.Mesh(walkwayGeo, deckMat);
+                walkway.position.set(72, 14.2 + level * 5, 0);
+                walkway.receiveShadow = true;
+                ship.add(walkway);
+
+                // White safety railings around the extended walkway
+                const railMat = new THREE.MeshStandardMaterial({
+                    color: 0xffffff,
+                    metalness: 0.7,
+                    roughness: 0.3
+                });
+
+                // Top horizontal rail - FRONT
+                const topRailFrontGeo = new THREE.BoxGeometry(28, 0.15, 0.15);
+                const topRailFront = new THREE.Mesh(topRailFrontGeo, railMat);
+                topRailFront.position.set(72, 15.2 + level * 5, 12.2);
+                ship.add(topRailFront);
+
+                // Top horizontal rail - BACK
+                const topRailBack = new THREE.Mesh(topRailFrontGeo, railMat);
+                topRailBack.position.set(72, 15.2 + level * 5, -12.2);
+                ship.add(topRailBack);
+
+                // Top horizontal rail - LEFT
+                const topRailSideGeo = new THREE.BoxGeometry(0.15, 0.15, 24.4);
+                const topRailLeft = new THREE.Mesh(topRailSideGeo, railMat);
+                topRailLeft.position.set(72 - 14, 15.2 + level * 5, 0);
+                ship.add(topRailLeft);
+
+                // Top horizontal rail - RIGHT
+                const topRailRight = new THREE.Mesh(topRailSideGeo, railMat);
+                topRailRight.position.set(72 + 14, 15.2 + level * 5, 0);
+                ship.add(topRailRight);
+
+                // Bottom horizontal rail - FRONT
+                const botRailFront = new THREE.Mesh(topRailFrontGeo, railMat);
+                botRailFront.position.set(72, 14.6 + level * 5, 12.2);
+                ship.add(botRailFront);
+
+                // Bottom horizontal rail - BACK
+                const botRailBack = new THREE.Mesh(topRailFrontGeo, railMat);
+                botRailBack.position.set(72, 14.6 + level * 5, -12.2);
+                ship.add(botRailBack);
+
+                // Bottom horizontal rail - LEFT
+                const botRailLeft = new THREE.Mesh(topRailSideGeo, railMat);
+                botRailLeft.position.set(72 - 14, 14.6 + level * 5, 0);
+                ship.add(botRailLeft);
+
+                // Bottom horizontal rail - RIGHT
+                const botRailRight = new THREE.Mesh(topRailSideGeo, railMat);
+                botRailRight.position.set(72 + 14, 14.6 + level * 5, 0);
+                ship.add(botRailRight);
+
+                // Vertical posts all around - FRONT
+                for (let i = 0; i < 12; i++) {
+                    const postGeo = new THREE.CylinderGeometry(0.08, 0.08, 0.6, 6);
+                    const post = new THREE.Mesh(postGeo, railMat);
+                    post.position.set(72 - 13 + i * 2.4, 14.9 + level * 5, 12.2);
+                    ship.add(post);
+                }
+
+                // Vertical posts all around - BACK
+                for (let i = 0; i < 12; i++) {
+                    const postGeo = new THREE.CylinderGeometry(0.08, 0.08, 0.6, 6);
+                    const post = new THREE.Mesh(postGeo, railMat);
+                    post.position.set(72 - 13 + i * 2.4, 14.9 + level * 5, -12.2);
+                    ship.add(post);
+                }
+
+                // Vertical posts all around - LEFT
+                for (let i = 0; i < 10; i++) {
+                    const postGeo = new THREE.CylinderGeometry(0.08, 0.08, 0.6, 6);
+                    const post = new THREE.Mesh(postGeo, railMat);
+                    post.position.set(72 - 14, 14.9 + level * 5, -11 + i * 2.4);
+                    ship.add(post);
+                }
+
+                // Vertical posts all around - RIGHT
+                for (let i = 0; i < 10; i++) {
+                    const postGeo = new THREE.CylinderGeometry(0.08, 0.08, 0.6, 6);
+                    const post = new THREE.Mesh(postGeo, railMat);
+                    post.position.set(72 + 14, 14.9 + level * 5, -11 + i * 2.4);
+                    ship.add(post);
+                }
+            }
+
+            // Bridge windows (optimized)
+            for (let level = 0; level < 5; level++) {
+                const windowsThisLevel = level < 2 ? 10 : 7;
+                const windowY = 16 + level * 5;
+                
+                for (let i = 0; i < windowsThisLevel; i++) {
+                    const windowGeo = new THREE.BoxGeometry(1.4, 2.8, 0.15);
+                    const windowMat = new THREE.MeshStandardMaterial({
+                        color: 0x0a0f14,
+                        metalness: 0.95,
+                        roughness: 0.05,
+                        emissive: 0x1a2a3a,
+                        emissiveIntensity: 0.15
+                    });
+                    const window = new THREE.Mesh(windowGeo, windowMat);
+                    const xStart = level < 3 ? -10 : -7;
+                    const spacing = level < 3 ? 1.7 : 1.8;
+                    window.position.set(72 + xStart + i * spacing, windowY, 10.3);
+                    ship.add(window);
+
+                    // Window frames
+                    const frameGeo = new THREE.BoxGeometry(1.45, 2.85, 0.1);
+                    const frameMat = new THREE.MeshStandardMaterial({
+                        color: 0x2a3540,
+                        metalness: 0.6,
+                        roughness: 0.7
+                    });
+                    const frame = new THREE.Mesh(frameGeo, frameMat);
+                    frame.position.set(72 + xStart + i * spacing, windowY, 10.4);
+                    ship.add(frame);
+                }
+            }
+
+            // Bridge wings (side extensions)
+            for (let side = 0; side < 2; side++) {
+                const wingGeo = new THREE.BoxGeometry(4, 3, 8);
+                const wing = new THREE.Mesh(wingGeo, bridgeMat);
+                wing.position.set(72, 38, side === 0 ? 14 : -14);
+                wing.castShadow = true;
+                ship.add(wing);
+            }
+
+            // ========== WHEELHOUSE / HELM (SHIP'S STEERING CONTROLS) ==========
+            
+            // Main control console in wheelhouse
+            const consoleGeo = new THREE.BoxGeometry(6, 1.5, 2);
+            const consoleMat = new THREE.MeshStandardMaterial({
+                color: 0x2a2a2a,
+                metalness: 0.6,
+                roughness: 0.5
+            });
+            const console = new THREE.Mesh(consoleGeo, consoleMat);
+            console.position.set(72, 37, 5);
+            ship.add(console);
+
+            // Ship's Wheel (Helm) - Main steering wheel
+            const wheelSpokeMat = new THREE.MeshStandardMaterial({
+                color: 0x5a3a1a,
+                metalness: 0.3,
+                roughness: 0.7
+            });
+
+            // Wheel center hub
+            const wheelHubGeo = new THREE.CylinderGeometry(0.8, 0.8, 0.4, 16);
+            const wheelHub = new THREE.Mesh(wheelHubGeo, new THREE.MeshStandardMaterial({
+                color: 0x8b7355,
+                metalness: 0.5,
+                roughness: 0.6
+            }));
+            wheelHub.rotation.x = Math.PI / 2;
+            wheelHub.position.set(72, 37.5, 6.5);
+            ship.add(wheelHub);
+
+            // Wheel outer rim
+            const wheelRimGeo = new THREE.TorusGeometry(1.8, 0.15, 16, 32);
+            const wheelRim = new THREE.Mesh(wheelRimGeo, wheelSpokeMat);
+            wheelRim.position.copy(wheelHub.position);
+            ship.add(wheelRim);
+
+            // Wheel spokes (8 spokes)
+            for (let i = 0; i < 8; i++) {
+                const spokeGeo = new THREE.BoxGeometry(0.12, 1.6, 0.12);
+                const spoke = new THREE.Mesh(spokeGeo, wheelSpokeMat);
+                const angle = (i * Math.PI * 2) / 8;
+                spoke.position.set(
+                    wheelHub.position.x + Math.cos(angle) * 0.9,
+                    wheelHub.position.y + Math.sin(angle) * 0.9,
+                    wheelHub.position.z
+                );
+                spoke.rotation.z = angle;
+                ship.add(spoke);
+
+                // Spoke handles
+                const handleGeo = new THREE.SphereGeometry(0.15, 12, 12);
+                const handle = new THREE.Mesh(handleGeo, new THREE.MeshStandardMaterial({
+                    color: 0x8b7355,
+                    metalness: 0.6,
+                    roughness: 0.4
+                }));
+                handle.position.set(
+                    wheelHub.position.x + Math.cos(angle) * 1.8,
+                    wheelHub.position.y + Math.sin(angle) * 1.8,
+                    wheelHub.position.z
+                );
+                ship.add(handle);
+            }
+
+            // Wheel stand/pedestal
+            const wheelStandGeo = new THREE.CylinderGeometry(0.3, 0.4, 1.5, 12);
+            const wheelStand = new THREE.Mesh(wheelStandGeo, new THREE.MeshStandardMaterial({
+                color: 0x2a2a2a,
+                metalness: 0.7,
+                roughness: 0.6
+            }));
+            wheelStand.position.set(72, 36.5, 6.5);
+            ship.add(wheelStand);
+
+            // Control levers (throttle & gear)
+            for (let i = 0; i < 2; i++) {
+                const leverBaseGeo = new THREE.CylinderGeometry(0.2, 0.2, 0.8, 12);
+                const leverBase = new THREE.Mesh(leverBaseGeo, consoleMat);
+                leverBase.position.set(70 + i * 1.5, 37.5, 5.5);
+                ship.add(leverBase);
+
+                const leverHandleGeo = new THREE.BoxGeometry(0.15, 1.2, 0.4);
+                const leverHandleMat = new THREE.MeshStandardMaterial({
+                    color: 0xff4444,
+                    metalness: 0.6,
+                    roughness: 0.5
+                });
+                const leverHandle = new THREE.Mesh(leverHandleGeo, leverHandleMat);
+                leverHandle.position.set(70 + i * 1.5, 38.3, 5.5);
+                leverHandle.rotation.x = -Math.PI / 6;
+                ship.add(leverHandle);
+            }
+
+            // Navigation instruments panel
+            const instrumentsGeo = new THREE.BoxGeometry(5, 1.2, 0.2);
+            const instrumentsMat = new THREE.MeshStandardMaterial({
+                color: 0x1a1a1a,
+                metalness: 0.7,
+                roughness: 0.4,
+                emissive: 0x004400,
+                emissiveIntensity: 0.3
+            });
+            const instruments = new THREE.Mesh(instrumentsGeo, instrumentsMat);
+            instruments.position.set(72, 38.5, 4.8);
+            instruments.rotation.x = -Math.PI / 8;
+            ship.add(instruments);
+
+            // Radar display screens
+            for (let i = 0; i < 2; i++) {
+                const screenGeo = new THREE.BoxGeometry(1.2, 1, 0.1);
+                const screenMat = new THREE.MeshStandardMaterial({
+                    color: 0x00ff00,
+                    emissive: 0x00ff00,
+                    emissiveIntensity: 0.5
+                });
+                const screen = new THREE.Mesh(screenGeo, screenMat);
+                screen.position.set(71 + i * 2, 38.5, 4.7);
+                screen.rotation.x = -Math.PI / 8;
+                ship.add(screen);
+            }
+
+            // Captain's chair
+            const chairSeatGeo = new THREE.BoxGeometry(1.2, 0.3, 1.2);
+            const chairMat = new THREE.MeshStandardMaterial({
+                color: 0x1a1a1a,
+                metalness: 0.4,
+                roughness: 0.7
+            });
+            const chairSeat = new THREE.Mesh(chairSeatGeo, chairMat);
+            chairSeat.position.set(72, 36.5, 8);
+            ship.add(chairSeat);
+
+            const chairBackGeo = new THREE.BoxGeometry(1.2, 1.5, 0.3);
+            const chairBack = new THREE.Mesh(chairBackGeo, chairMat);
+            chairBack.position.set(72, 37.5, 8.5);
+            ship.add(chairBack);
+
+            // ========== FUNNELS/CHIMNEYS ==========
+            
+            for (let i = 0; i < 2; i++) {
+                const funnelGeo = new THREE.CylinderGeometry(2.5, 3, 16, 16);
+                const funnelMat = new THREE.MeshStandardMaterial({
+                    color: 0x8a4520,
+                    metalness: 0.5,
+                    roughness: 0.85
+                });
+                const funnel = new THREE.Mesh(funnelGeo, funnelMat);
+                funnel.position.set(65 + i * 8, 48, -8);
+                funnel.castShadow = true;
+                ship.add(funnel);
+
+                // Funnel top cap
+                const capGeo = new THREE.CylinderGeometry(2.8, 2.5, 0.8, 16);
+                const capMat = new THREE.MeshStandardMaterial({
+                    color: 0x1a1a1a,
+                    metalness: 0.7,
+                    roughness: 0.6
+                });
+                const cap = new THREE.Mesh(capGeo, capMat);
+                cap.position.set(65 + i * 8, 56.5, -8);
+                ship.add(cap);
+
+                // Funnel exhaust vents
+                for (let v = 0; v < 3; v++) {
+                    const ventGeo = new THREE.BoxGeometry(0.3, 2, 0.3);
+                    const vent = new THREE.Mesh(ventGeo, capMat);
+                    vent.position.set(65 + i * 8 + (v - 1) * 1, 54, -8);
+                    ship.add(vent);
+                }
+            }
+
+            // ========== MAST & RADAR ==========
+            
+            // Main mast
+            const mastGeo = new THREE.CylinderGeometry(0.4, 0.5, 22, 12);
+            const mastMat = new THREE.MeshStandardMaterial({
+                color: 0xcccccc,
+                metalness: 0.7,
+                roughness: 0.5
+            });
+            const mast = new THREE.Mesh(mastGeo, mastMat);
+            mast.position.set(72, 53, 8);
+            mast.castShadow = true;
+            ship.add(mast);
+
+            // Radar dish
+            const radarGeo = new THREE.CylinderGeometry(3, 3, 0.5, 32);
+            const radarMat = new THREE.MeshStandardMaterial({
+                color: 0xffffff,
+                metalness: 0.8,
+                roughness: 0.3
+            });
+            const radar = new THREE.Mesh(radarGeo, radarMat);
+            radar.position.set(72, 62, 8);
+            radar.rotation.x = Math.PI / 6;
+            ship.add(radar);
+
+            // Communication antennas
+            for (let i = 0; i < 4; i++) {
+                const antennaGeo = new THREE.CylinderGeometry(0.15, 0.15, 6 + i, 8);
+                const antenna = new THREE.Mesh(antennaGeo, mastMat);
+                antenna.position.set(70 + i * 1.5, 59, 5);
+                ship.add(antenna);
+            }
+
+            // ========== CRANES (REALISTIC DECK CRANES) ==========
+            
+            const craneMat = new THREE.MeshStandardMaterial({
+                color: 0xd4a120,
+                metalness: 0.6,
+                roughness: 0.8
+            });
+
+            for (let i = 0; i < 2; i++) {
+                const craneX = -25 + i * 45;
+
+                // Crane base
+                const craneBaseGeo = new THREE.CylinderGeometry(4.5, 5.5, 5, 16);
+                const craneBase = new THREE.Mesh(craneBaseGeo, craneMat);
+                craneBase.position.set(craneX, 14, 0);
+                craneBase.castShadow = true;
+                ship.add(craneBase);
+
+                // Crane tower
+                const craneTowerGeo = new THREE.BoxGeometry(2.8, 35, 2.8);
+                const craneTower = new THREE.Mesh(craneTowerGeo, craneMat);
+                craneTower.position.set(craneX, 31, 0);
+                craneTower.castShadow = true;
+                ship.add(craneTower);
+
+                // Crane lattice structure
+                for (let lat = 0; lat < 4; lat++) {
+                    const latticeGeo = new THREE.BoxGeometry(3, 0.4, 3);
+                    const lattice = new THREE.Mesh(latticeGeo, craneMat);
+                    lattice.position.set(craneX, 18 + lat * 8, 0);
+                    ship.add(lattice);
+                }
+
+                // Crane boom (main arm)
+                const boomGeo = new THREE.BoxGeometry(48, 2, 2);
+                const boom = new THREE.Mesh(boomGeo, craneMat);
+                boom.position.set(craneX + 20, 47, 0);
+                boom.rotation.z = Math.PI / 12;
+                boom.castShadow = true;
+                ship.add(boom);
+
+                // Counter-weight removed - was causing floating box issue
+
+                // Crane cables
+                for (let c = 0; c < 2; c++) {
+                    const cableGeo = new THREE.CylinderGeometry(0.12, 0.12, 22, 8);
+                    const cableMat = new THREE.MeshStandardMaterial({
+                        color: 0x1a1a1a,
+                        metalness: 0.8,
+                        roughness: 0.5
+                    });
+                    const cable = new THREE.Mesh(cableGeo, cableMat);
+                    cable.position.set(craneX + 28, 35, -1 + c * 2);
+                    ship.add(cable);
+                }
+            }
+
+            // ========== LIFEBOATS ==========
+            
+            const lifeboatMat = new THREE.MeshStandardMaterial({
+                color: 0xff6b35,
+                metalness: 0.3,
+                roughness: 0.7
+            });
+
+            for (let side = 0; side < 2; side++) {
+                for (let i = 0; i < 2; i++) {
+                    const boatGeo = new THREE.BoxGeometry(8, 3, 3);
+                    const boat = new THREE.Mesh(boatGeo, lifeboatMat);
+                    boat.position.set(60 + i * 10, 20, side === 0 ? 12 : -12);
+                    boat.castShadow = true;
+                    ship.add(boat);
+
+                    // Lifeboat covers
+                    const coverGeo = new THREE.BoxGeometry(8.2, 0.5, 3.2);
+                    const coverMat = new THREE.MeshStandardMaterial({
+                        color: 0xffffff,
+                        metalness: 0.2,
+                        roughness: 0.9
+                    });
+                    const cover = new THREE.Mesh(coverGeo, coverMat);
+                    cover.position.set(60 + i * 10, 21.8, side === 0 ? 12 : -12);
+                    ship.add(cover);
+                }
+            }
+
+            // ========== ANCHORS ==========
+            
+            const anchorMat = new THREE.MeshStandardMaterial({
+                color: 0x1a1a1a,
+                metalness: 0.8,
+                roughness: 0.7
+            });
+
+            for (let side = 0; side < 2; side++) {
+                // Anchor body
+                const anchorGeo = new THREE.BoxGeometry(2, 5, 0.8);
+                const anchor = new THREE.Mesh(anchorGeo, anchorMat);
+                anchor.position.set(82, 3, side === 0 ? 12 : -12);
+                anchor.castShadow = true;
+                ship.add(anchor);
+
+                // Anchor chain
+                for (let c = 0; c < 5; c++) {
+                    const chainGeo = new THREE.TorusGeometry(0.5, 0.15, 8, 6);
+                    const chain = new THREE.Mesh(chainGeo, anchorMat);
+                    chain.position.set(82, 8 + c * 2, side === 0 ? 12 : -12);
+                    chain.rotation.x = Math.PI / 2;
+                    ship.add(chain);
+                }
+            }
+
+            // ========== PROPELLER & RUDDER ==========
+            
+            // Propeller
+            const propHubGeo = new THREE.CylinderGeometry(2, 2, 1.5, 16);
+            const propMat = new THREE.MeshStandardMaterial({
+                color: 0x8b6914,
+                metalness: 0.9,
+                roughness: 0.4
+            });
+            const propHub = new THREE.Mesh(propHubGeo, propMat);
+            propHub.rotation.z = Math.PI / 2;
+            propHub.position.set(-95, -8, 0);
+            ship.add(propHub);
+
+            // Propeller blades
+            for (let b = 0; b < 5; b++) {
+                const bladeGeo = new THREE.BoxGeometry(6, 0.3, 2);
+                const blade = new THREE.Mesh(bladeGeo, propMat);
+                blade.position.set(-95.5, -8, 0);
+                blade.rotation.x = (b * Math.PI * 2) / 5;
+                propHub.add(blade);
+            }
+
+            // Rudder
+            const rudderGeo = new THREE.BoxGeometry(0.8, 14, 8);
+            const rudderMat = new THREE.MeshStandardMaterial({
+                color: 0x1a2026,
+                metalness: 0.6,
+                roughness: 0.8
+            });
+            const rudder = new THREE.Mesh(rudderGeo, rudderMat);
+            rudder.position.set(-92, -5, 0);
+            rudder.castShadow = true;
+            ship.add(rudder);
+
+            // ========== NAVIGATION LIGHTS ==========
+            
+            // Port light (red - left)
+            const portLight = new THREE.PointLight(0xff0000, 2, 30);
+            portLight.position.set(85, 8, 16);
+            portLight.userData.baseIntensity = 2;
+            ship.add(portLight);
+
+            const portLightMesh = new THREE.Mesh(
+                new THREE.SphereGeometry(0.4, 16, 16),
+                new THREE.MeshStandardMaterial({
+                    color: 0xff0000,
+                    emissive: 0xff0000,
+                    emissiveIntensity: 1
+                })
+            );
+            portLightMesh.position.copy(portLight.position);
+            ship.add(portLightMesh);
+
+            // Starboard light (green - right)
+            const starboardLight = new THREE.PointLight(0x00ff00, 2, 30);
+            starboardLight.position.set(85, 8, -16);
+            starboardLight.userData.baseIntensity = 2;
+            ship.add(starboardLight);
+
+            const starboardLightMesh = new THREE.Mesh(
+                new THREE.SphereGeometry(0.4, 16, 16),
+                new THREE.MeshStandardMaterial({
+                    color: 0x00ff00,
+                    emissive: 0x00ff00,
+                    emissiveIntensity: 1
+                })
+            );
+            starboardLightMesh.position.copy(starboardLight.position);
+            ship.add(starboardLightMesh);
+
+            // Masthead lights (white)
+            for (let i = 0; i < 2; i++) {
+                const mastLight = new THREE.PointLight(0xffffff, 3, 40);
+                mastLight.position.set(72, 50 + i * 10, 8);
+                ship.add(mastLight);
+
+                const mastLightMesh = new THREE.Mesh(
+                    new THREE.SphereGeometry(0.5, 16, 16),
+                    new THREE.MeshStandardMaterial({
+                        color: 0xffffff,
+                        emissive: 0xffffff,
+                        emissiveIntensity: 1.2
+                    })
+                );
+                mastLightMesh.position.copy(mastLight.position);
+                ship.add(mastLightMesh);
+            }
+
+            // --- SHIP-ONLY BRIGHT LIGHT ---
+            const shipLight = new THREE.PointLight(0xffffff, 2.5, 400, 2.2);
+            shipLight.position.set(0, 90, 0);
+            shipLight.castShadow = false;
+            ship.add(shipLight);
+
+            scene.add(ship);
+
+            createShipInteriors();
+        }
+
+        // ========== INTERIOR ROOMS ==========
+        function createShipInteriors() {
+            // Materials for interiors
+            const wallMat = new THREE.MeshStandardMaterial({
+                color: 0xd4c5b0,
+                metalness: 0.1,
+                roughness: 0.9
+            });
+
+            const floorMat = new THREE.MeshStandardMaterial({
+                color: 0x5a4a3a,
+                metalness: 0.2,
+                roughness: 0.85
+            });
+
+            const ceilingMat = new THREE.MeshStandardMaterial({
+                color: 0xf0f0f0,
+                metalness: 0.3,
+                roughness: 0.7
+            });
+
+            const woodMat = new THREE.MeshStandardMaterial({
+                color: 0x8b4513,
+                metalness: 0.1,
+                roughness: 0.8
+            });
+
+            const metalMat = new THREE.MeshStandardMaterial({
+                color: 0x808080,
+                metalness: 0.8,
+                roughness: 0.4
+            });
+
+            // ========== 1. CAPTAIN'S CABIN (Bridge level - deck 6) ==========
+const cabinGroup = new THREE.Group();
+cabinGroup.position.set(72, 33, -8); // Inside bridge, back area
+// Room walls - TALLER for better view
+const cabinFloor = new THREE.Mesh(new THREE.BoxGeometry(12, 0.3, 10), floorMat);
+cabinFloor.position.y = 0;
+cabinFloor.receiveShadow = true;
+cabinGroup.add(cabinFloor);
+const cabinCeiling = new THREE.Mesh(new THREE.BoxGeometry(12, 0.3, 10), ceilingMat);
+cabinCeiling.position.y = 8; // FIXED: Increased height (6→8) for spacious feel
+cabinGroup.add(cabinCeiling);
+// Walls (back, left, right - front is entrance) - taller
+const backWall = new THREE.Mesh(new THREE.BoxGeometry(12, 8, 0.3), wallMat); // Height 6→8
+backWall.position.set(0, 4, -5);
+cabinGroup.add(backWall);
+const leftWall = new THREE.Mesh(new THREE.BoxGeometry(0.3, 8, 10), wallMat); // Height 6→8
+leftWall.position.set(-6, 4, 0);
+cabinGroup.add(leftWall);
+const rightWall = new THREE.Mesh(new THREE.BoxGeometry(0.3, 8, 10), wallMat); // Height 6→8
+rightWall.position.set(6, 4, 0);
+cabinGroup.add(rightWall);
+// Captain's bed (adjusted y for taller room)
+const bedFrame = new THREE.Mesh(new THREE.BoxGeometry(4, 0.5, 6), woodMat);
+bedFrame.position.set(-3, 0.8, -2);
+bedFrame.castShadow = true;
+cabinGroup.add(bedFrame);
+const mattress = new THREE.Mesh(new THREE.BoxGeometry(3.8, 0.6, 5.8), new THREE.MeshStandardMaterial({
+    color: 0x3a5a7a,
+    metalness: 0.1,
+    roughness: 0.95
+}));
+mattress.position.set(-3, 1.4, -2);
+cabinGroup.add(mattress);
+const pillow = new THREE.Mesh(new THREE.BoxGeometry(1.5, 0.3, 1), new THREE.MeshStandardMaterial({
+    color: 0xffffff,
+    metalness: 0.05,
+    roughness: 0.9
+}));
+pillow.position.set(-3, 1.8, -4);
+cabinGroup.add(pillow);
+// Bedside table (adjusted)
+const nightstand = new THREE.Mesh(new THREE.BoxGeometry(1.2, 1.5, 1), woodMat);
+nightstand.position.set(-5.2, 1.2, -2);
+nightstand.castShadow = true;
+cabinGroup.add(nightstand);
+// Lamp on nightstand (adjusted y)
+const lampBase = new THREE.Mesh(new THREE.CylinderGeometry(0.15, 0.2, 0.8, 12), metalMat);
+lampBase.position.set(-5.2, 2.2, -2);
+cabinGroup.add(lampBase);
+const lampShade = new THREE.Mesh(new THREE.ConeGeometry(0.3, 0.5, 16), new THREE.MeshStandardMaterial({
+    color: 0xffd700,
+    emissive: 0xffd700,
+    emissiveIntensity: 0.5
+}));
+lampShade.position.set(-5.2, 2.8, -2);
+cabinGroup.add(lampShade);
+// Captain's desk (adjusted y)
+const deskTop = new THREE.Mesh(new THREE.BoxGeometry(3, 0.3, 1.5), woodMat);
+deskTop.position.set(3, 2, 2);
+deskTop.castShadow = true;
+cabinGroup.add(deskTop);
+const deskDrawers = new THREE.Mesh(new THREE.BoxGeometry(2.8, 1.5, 1.4), woodMat);
+deskDrawers.position.set(3, 1.1, 2);
+cabinGroup.add(deskDrawers);
+// Office chair (adjusted)
+const chairSeat = new THREE.Mesh(new THREE.CylinderGeometry(0.6, 0.6, 0.2, 16), new THREE.MeshStandardMaterial({
+    color: 0x1a1a1a,
+    metalness: 0.3,
+    roughness: 0.7
+}));
+chairSeat.position.set(3, 1.5, 0.5);
+cabinGroup.add(chairSeat);
+const chairBack = new THREE.Mesh(new THREE.BoxGeometry(0.8, 1.5, 0.2), new THREE.MeshStandardMaterial({
+    color: 0x1a1a1a,
+    metalness: 0.3,
+    roughness: 0.7
+}));
+chairBack.position.set(3, 2.2, 0.8);
+cabinGroup.add(chairBack);
+// Wardrobe (adjusted y)
+const wardrobe = new THREE.Mesh(new THREE.BoxGeometry(2, 4, 1.5), woodMat);
+wardrobe.position.set(3, 3, -3); // Adjusted for taller
+wardrobe.castShadow = true;
+cabinGroup.add(wardrobe);
+// Small bathroom area (taller wall)
+const bathroomWall = new THREE.Mesh(new THREE.BoxGeometry(0.2, 8, 3), new THREE.MeshStandardMaterial({
+    color: 0xffffff,
+    metalness: 0.2,
+    roughness: 0.6
+}));
+bathroomWall.position.set(0, 4, 3.5);
+cabinGroup.add(bathroomWall);
+// Sink (adjusted y)
+const sink = new THREE.Mesh(new THREE.BoxGeometry(1, 0.3, 0.8), new THREE.MeshStandardMaterial({
+    color: 0xffffff,
+    metalness: 0.7,
+    roughness: 0.3
+}));
+sink.position.set(-2, 2.5, 4); // Adjusted
+cabinGroup.add(sink);
+// Mirror above sink (adjusted y)
+const mirror = new THREE.Mesh(new THREE.BoxGeometry(1.2, 1.5, 0.1), new THREE.MeshStandardMaterial({
+    color: 0x88aacc,
+    metalness: 0.95,
+    roughness: 0.05
+}));
+mirror.position.set(-2, 4.5, 4.8); // Adjusted
+cabinGroup.add(mirror);
+// Wall-mounted camera in cabin (adjusted y)
+const cabinCamBody = new THREE.Mesh(new THREE.BoxGeometry(0.8, 0.6, 0.8), new THREE.MeshStandardMaterial({
+    color: 0x2a2a2a,
+    metalness: 0.6,
+    roughness: 0.5
+}));
+cabinCamBody.position.set(5.5, 7.5, -4.5); // Adjusted for taller
+cabinGroup.add(cabinCamBody);
+const cabinCamLens = new THREE.Mesh(new THREE.SphereGeometry(0.4, 16, 16), new THREE.MeshStandardMaterial({
+    color: 0xff0000,
+    emissive: 0xff0000,
+    emissiveIntensity: 0.3
+}));
+cabinCamLens.position.set(5.2, 7.5, -4);
+cabinGroup.add(cabinCamLens);
+// Ceiling light (adjusted y)
+const cabinLight = new THREE.PointLight(0xffd9a0, 1.5, 15);
+cabinLight.position.set(0, 7.5, 0); // Adjusted
+cabinLight.castShadow = true;
+cabinGroup.add(cabinLight);
+ship.add(cabinGroup);
+window.cabinCameraPos = new THREE.Vector3(72, 36, -8); // Camera position for cabin view
+
+// ========== 2. CREW MESS HALL (Below deck - deck 2) ==========
+const messGroup = new THREE.Group();
+messGroup.position.set(20, 5, 0); // Mid-ship, lower deck
+// Room structure - TALLER
+const messFloor = new THREE.Mesh(new THREE.BoxGeometry(20, 0.3, 15), floorMat);
+messFloor.position.y = 0;
+messFloor.receiveShadow = true;
+messGroup.add(messFloor);
+const messCeiling = new THREE.Mesh(new THREE.BoxGeometry(20, 0.3, 15), ceilingMat);
+messCeiling.position.y = 9; // FIXED: Increased height (7→9)
+messGroup.add(messCeiling);
+// Walls - taller
+const messBackWall = new THREE.Mesh(new THREE.BoxGeometry(20, 9, 0.3), wallMat); // Height 7→9
+messBackWall.position.set(0, 4.5, -7.5);
+messGroup.add(messBackWall);
+const messFrontWall = new THREE.Mesh(new THREE.BoxGeometry(20, 9, 0.3), wallMat); // Height 7→9
+messFrontWall.position.set(0, 4.5, 7.5);
+messGroup.add(messFrontWall);
+const messLeftWall = new THREE.Mesh(new THREE.BoxGeometry(0.3, 9, 15), wallMat); // Height 7→9
+messLeftWall.position.set(-10, 4.5, 0);
+messGroup.add(messLeftWall);
+const messRightWall = new THREE.Mesh(new THREE.BoxGeometry(0.3, 9, 15), wallMat); // Height 7→9
+messRightWall.position.set(10, 4.5, 0);
+messGroup.add(messRightWall);
+// Dining tables (3 tables) - adjusted y for taller
+for (let i = 0; i < 3; i++) {
+    const tableTop = new THREE.Mesh(new THREE.BoxGeometry(4, 0.3, 2), woodMat);
+    tableTop.position.set(-6 + i * 6, 2, 0);
+    tableTop.castShadow = true;
+    messGroup.add(tableTop);
+    const tableLeg1 = new THREE.Mesh(new THREE.CylinderGeometry(0.15, 0.15, 2, 12), metalMat);
+    tableLeg1.position.set(-6 + i * 6 - 1.5, 1, -0.7);
+    messGroup.add(tableLeg1);
+    const tableLeg2 = new THREE.Mesh(new THREE.CylinderGeometry(0.15, 0.15, 2, 12), metalMat);
+    tableLeg2.position.set(-6 + i * 6 + 1.5, 1, -0.7);
+    messGroup.add(tableLeg2);
+    const tableLeg3 = new THREE.Mesh(new THREE.CylinderGeometry(0.15, 0.15, 2, 12), metalMat);
+    tableLeg3.position.set(-6 + i * 6 - 1.5, 1, 0.7);
+    messGroup.add(tableLeg3);
+    const tableLeg4 = new THREE.Mesh(new THREE.CylinderGeometry(0.15, 0.15, 2, 12), metalMat);
+    tableLeg4.position.set(-6 + i * 6 + 1.5, 1, 0.7);
+    messGroup.add(tableLeg4);
+    // Chairs (4 per table) - adjusted y
+    for (let j = 0; j < 4; j++) {
+        const chairSeat = new THREE.Mesh(new THREE.BoxGeometry(0.8, 0.15, 0.8), new THREE.MeshStandardMaterial({
+            color: 0x2a2a2a,
+            metalness: 0.4,
+            roughness: 0.7
+        }));
+        const xPos = -6 + i * 6 + (j % 2 === 0 ? -2.2 : 2.2);
+        const zPos = j < 2 ? -1.5 : 1.5;
+        chairSeat.position.set(xPos, 1.5, zPos);
+        chairSeat.castShadow = true;
+        messGroup.add(chairSeat);
+        const chairBack = new THREE.Mesh(new THREE.BoxGeometry(0.8, 1, 0.1), new THREE.MeshStandardMaterial({
+            color: 0x2a2a2a,
+            metalness: 0.4,
+            roughness: 0.7
+        }));
+        chairBack.position.set(xPos, 2.2, zPos + (j < 2 ? -0.4 : 0.4));
+        messGroup.add(chairBack);
+    }
+}
+// Kitchen counter - adjusted y
+const counter = new THREE.Mesh(new THREE.BoxGeometry(8, 2.5, 1.5), new THREE.MeshStandardMaterial({
+    color: 0x708090,
+    metalness: 0.6,
+    roughness: 0.4
+}));
+counter.position.set(0, 1.7, -6);
+counter.castShadow = true;
+messGroup.add(counter);
+// Coffee machine - adjusted y
+const coffeeMachine = new THREE.Mesh(new THREE.BoxGeometry(0.8, 1, 0.6), new THREE.MeshStandardMaterial({
+    color: 0x3a3a3a,
+    metalness: 0.7,
+    roughness: 0.4
+}));
+coffeeMachine.position.set(-3, 4, -5.8); // Adjusted
+messGroup.add(coffeeMachine);
+// Microwave - adjusted y
+const microwave = new THREE.Mesh(new THREE.BoxGeometry(1.2, 0.8, 0.8), new THREE.MeshStandardMaterial({
+    color: 0xffffff,
+    metalness: 0.5,
+    roughness: 0.5
+}));
+microwave.position.set(0, 4, -5.8); // Adjusted
+messGroup.add(microwave);
+// Refrigerator - adjusted y
+const fridge = new THREE.Mesh(new THREE.BoxGeometry(1.5, 3.5, 1.2), new THREE.MeshStandardMaterial({
+    color: 0xf0f0f0,
+    metalness: 0.6,
+    roughness: 0.3
+}));
+fridge.position.set(5, 2.2, -6.5);
+fridge.castShadow = true;
+messGroup.add(fridge);
+// Notice board on wall - adjusted y
+const noticeBoard = new THREE.Mesh(new THREE.BoxGeometry(3, 2, 0.1), new THREE.MeshStandardMaterial({
+    color: 0x8b7355,
+    metalness: 0.1,
+    roughness: 0.9
+}));
+noticeBoard.position.set(-7, 5.5, -7.4); // Adjusted
+messGroup.add(noticeBoard);
+// TV on wall - adjusted y
+const tv = new THREE.Mesh(new THREE.BoxGeometry(2.5, 1.5, 0.2), new THREE.MeshStandardMaterial({
+    color: 0x1a1a1a,
+    metalness: 0.8,
+    roughness: 0.3
+}));
+tv.position.set(7, 6, -7.4); // Adjusted
+messGroup.add(tv);
+const tvScreen = new THREE.Mesh(new THREE.BoxGeometry(2.3, 1.3, 0.05), new THREE.MeshStandardMaterial({
+    color: 0x004488,
+    emissive: 0x004488,
+    emissiveIntensity: 0.3
+}));
+tvScreen.position.set(7, 6, -7.2);
+messGroup.add(tvScreen);
+// Wall-mounted camera in mess hall - adjusted y
+const messCamBody = new THREE.Mesh(new THREE.BoxGeometry(0.8, 0.6, 0.8), new THREE.MeshStandardMaterial({
+    color: 0x2a2a2a,
+    metalness: 0.6,
+    roughness: 0.5
+}));
+messCamBody.position.set(9.5, 8.5, -7); // Adjusted for taller
+messGroup.add(messCamBody);
+const messCamLens = new THREE.Mesh(new THREE.SphereGeometry(0.4, 16, 16), new THREE.MeshStandardMaterial({
+    color: 0xff0000,
+    emissive: 0xff0000,
+    emissiveIntensity: 0.3
+}));
+messCamLens.position.set(9.2, 8.5, -6.5);
+messGroup.add(messCamLens);
+// Ceiling lights - adjusted y (3 lights)
+for (let i = 0; i < 3; i++) {
+    const messLight = new THREE.PointLight(0xffffff, 1.8, 18);
+    messLight.position.set(-6 + i * 6, 8.5, 0); // Adjusted
+    messLight.castShadow = true;
+    messGroup.add(messLight);
+}
+ship.add(messGroup);
+window.messCameraPos = new THREE.Vector3(20, 8, 0); // Camera position for mess hall view
+
+// ========== 3. ENGINE ROOM (Below waterline - deck -1) ==========
+const engineGroup = new THREE.Group();
+engineGroup.position.set(-30, -12, 0); // Stern area, below waterline
+// Room structure - TALLER
+const engineFloor = new THREE.Mesh(new THREE.BoxGeometry(30, 0.5, 20), new THREE.MeshStandardMaterial({
+    color: 0x3a3a3a,
+    metalness: 0.7,
+    roughness: 0.8
+}));
+engineFloor.position.y = 0;
+engineFloor.receiveShadow = true;
+engineGroup.add(engineFloor);
+const engineCeiling = new THREE.Mesh(new THREE.BoxGeometry(30, 0.5, 20), metalMat);
+engineCeiling.position.y = 15; // FIXED: Increased height (12→15) for industrial space
+engineGroup.add(engineCeiling);
+// Walls - taller
+const engineBackWall = new THREE.Mesh(new THREE.BoxGeometry(30, 15, 0.5), metalMat); // Height 12→15
+engineBackWall.position.set(0, 7.5, -10);
+engineGroup.add(engineBackWall);
+const engineFrontWall = new THREE.Mesh(new THREE.BoxGeometry(30, 15, 0.5), metalMat); // Height 12→15
+engineFrontWall.position.set(0, 7.5, 10);
+engineGroup.add(engineFrontWall);
+const engineLeftWall = new THREE.Mesh(new THREE.BoxGeometry(0.5, 15, 20), metalMat); // Height 12→15
+engineLeftWall.position.set(-15, 7.5, 0);
+engineGroup.add(engineLeftWall);
+const engineRightWall = new THREE.Mesh(new THREE.BoxGeometry(0.5, 15, 20), metalMat); // Height 12→15
+engineRightWall.position.set(15, 7.5, 0);
+engineGroup.add(engineRightWall);
+// Main diesel engine (adjusted y for taller)
+const mainEngine = new THREE.Mesh(new THREE.BoxGeometry(8, 6, 4), new THREE.MeshStandardMaterial({
+    color: 0x1a4d1a,
+    metalness: 0.8,
+    roughness: 0.5
+}));
+mainEngine.position.set(0, 3.5, 0);
+mainEngine.castShadow = true;
+engineGroup.add(mainEngine);
+// Engine cylinders on top - adjusted y
+for (let i = 0; i < 6; i++) {
+    const cylinder = new THREE.Mesh(new THREE.CylinderGeometry(0.6, 0.6, 2, 16), new THREE.MeshStandardMaterial({
+        color: 0x2a2a2a,
+        metalness: 0.85,
+        roughness: 0.4
+    }));
+    cylinder.position.set(-3 + i * 1.2, 7.5, 0);
+    engineGroup.add(cylinder);
+    const cylinderHead = new THREE.Mesh(new THREE.CylinderGeometry(0.7, 0.6, 0.5, 16), new THREE.MeshStandardMaterial({
+        color: 0xff4444,
+        metalness: 0.7,
+        roughness: 0.5
+    }));
+    cylinderHead.position.set(-3 + i * 1.2, 8.8, 0);
+    engineGroup.add(cylinderHead);
+}
+// Large exhaust pipes - adjusted y
+for (let i = 0; i < 2; i++) {
+    const pipe = new THREE.Mesh(new THREE.CylinderGeometry(0.5, 0.5, 8, 16), new THREE.MeshStandardMaterial({
+        color: 0x8b4513,
+        metalness: 0.6,
+        roughness: 0.7
+    }));
+    pipe.position.set(-5 + i * 10, 10, -5); // Adjusted y
+    engineGroup.add(pipe);
+}
+// Coolant tanks
+for (let i = 0; i < 2; i++) {
+    const tank = new THREE.Mesh(new THREE.CylinderGeometry(1.5, 1.5, 4, 16), new THREE.MeshStandardMaterial({
+        color: 0x4a7a9a,
+        metalness: 0.75,
+        roughness: 0.4
+    }));
+    tank.position.set(-8 + i * 16, 2.5, 6);
+    tank.castShadow = true;
+    engineGroup.add(tank);
+}
+// Control panel - adjusted y
+const controlPanel = new THREE.Mesh(new THREE.BoxGeometry(4, 3, 0.5), new THREE.MeshStandardMaterial({
+    color: 0x2a2a2a,
+    metalness: 0.6,
+    roughness: 0.5
+}));
+controlPanel.position.set(10, 4, -9.5);
+controlPanel.castShadow = true;
+engineGroup.add(controlPanel);
+// Gauges on control panel - adjusted y
+for (let i = 0; i < 6; i++) {
+    const gauge = new THREE.Mesh(new THREE.CylinderGeometry(0.3, 0.3, 0.1, 16), new THREE.MeshStandardMaterial({
+        color: 0xffffff,
+        emissive: 0x00ff00,
+        emissiveIntensity: 0.4
+    }));
+    gauge.rotation.x = Math.PI / 2;
+    gauge.position.set(9 + (i % 3) * 0.8, 3.5 + Math.floor(i / 3) * 0.8, -9.2);
+    engineGroup.add(gauge);
+}
+// Ladders and catwalks - adjusted y
+const catwalk = new THREE.Mesh(new THREE.BoxGeometry(25, 0.2, 2), metalMat);
+catwalk.position.set(0, 11, -7); // Adjusted y
+engineGroup.add(catwalk);
+const catwalkRailing = new THREE.Mesh(new THREE.BoxGeometry(25, 1.2, 0.1), new THREE.MeshStandardMaterial({
+    color: 0xffff00,
+    metalness: 0.6,
+    roughness: 0.5
+}));
+catwalkRailing.position.set(0, 11.8, -8); // Adjusted
+engineGroup.add(catwalkRailing);
+// Ladder to catwalk - taller
+const ladderSide1 = new THREE.Mesh(new THREE.BoxGeometry(0.1, 11, 0.1), metalMat); // Height 8→11
+ladderSide1.position.set(12, 6, -8.5); // Adjusted y
+engineGroup.add(ladderSide1);
+const ladderSide2 = new THREE.Mesh(new THREE.BoxGeometry(0.1, 11, 0.1), metalMat); // Height 8→11
+ladderSide2.position.set(12.5, 6, -8.5); // Adjusted y
+engineGroup.add(ladderSide2);
+for (let i = 0; i < 14; i++) { // More rungs for taller
+    const rung = new THREE.Mesh(new THREE.BoxGeometry(0.5, 0.1, 0.1), metalMat);
+    rung.position.set(12.25, 1 + i * 0.8, -8.5);
+    engineGroup.add(rung);
+}
+// Ventilation ducts - adjusted y
+const duct1 = new THREE.Mesh(new THREE.BoxGeometry(20, 0.8, 0.8), metalMat);
+duct1.position.set(0, 14, 8); // Adjusted y
+engineGroup.add(duct1);
+const duct2 = new THREE.Mesh(new THREE.BoxGeometry(0.8, 9, 0.8), metalMat); // Height 6→9
+duct2.position.set(-12, 10, 8); // Adjusted y
+engineGroup.add(duct2);
+// Emergency equipment locker - adjusted y
+const locker = new THREE.Mesh(new THREE.BoxGeometry(1.5, 3, 1), new THREE.MeshStandardMaterial({
+    color: 0xff0000,
+    metalness: 0.6,
+    roughness: 0.6
+}));
+locker.position.set(-13, 2, 9);
+locker.castShadow = true;
+engineGroup.add(locker);
+// Fire extinguisher
+const extinguisher = new THREE.Mesh(new THREE.CylinderGeometry(0.2, 0.2, 1.5, 12), new THREE.MeshStandardMaterial({
+    color: 0xff0000,
+    metalness: 0.7,
+    roughness: 0.4
+}));
+extinguisher.position.set(13, 2, 9);
+engineGroup.add(extinguisher);
+// Oil barrels
+for (let i = 0; i < 3; i++) {
+    const barrel = new THREE.Mesh(new THREE.CylinderGeometry(0.6, 0.6, 1.8, 16), new THREE.MeshStandardMaterial({
+        color: 0x1a1a1a,
+        metalness: 0.8,
+        roughness: 0.5
+    }));
+    barrel.position.set(-10 + i * 1.5, 1.2, -8);
+    barrel.castShadow = true;
+    engineGroup.add(barrel);
+}
+// Wall-mounted camera in engine room - adjusted y
+const engineCamBody = new THREE.Mesh(new THREE.BoxGeometry(0.8, 0.6, 0.8), new THREE.MeshStandardMaterial({
+    color: 0x2a2a2a,
+    metalness: 0.6,
+    roughness: 0.5
+}));
+engineCamBody.position.set(14.5, 14.5, -9.5); // Adjusted for taller
+engineGroup.add(engineCamBody);
+const engineCamLens = new THREE.Mesh(new THREE.SphereGeometry(0.4, 16, 16), new THREE.MeshStandardMaterial({
+    color: 0xff0000,
+    emissive: 0xff0000,
+    emissiveIntensity: 0.3
+}));
+engineCamLens.position.set(14.2, 14.5, -9);
+engineGroup.add(engineCamLens);
+// Industrial lighting - adjusted y (harsh yellow lights)
+for (let i = 0; i < 4; i++) {
+    const engineLight = new THREE.PointLight(0xffcc00, 2, 20);
+    engineLight.position.set(-10 + i * 7, 14, 0); // Adjusted y
+    engineLight.castShadow = true;
+    engineGroup.add(engineLight);
+}
+// Add engine room to ship at the END
+ship.add(engineGroup);
+window.engineCameraPos = new THREE.Vector3(-30, -6, 0);
+
+          // 📹 REALISTIC SECURITY CAMERA - Front-Right Corner of Bridge Top
+const cameraGroup = new THREE.Group();
+
+// Camera mounting bracket (wall mount)
+const mountPlate = new THREE.Mesh(
+    new THREE.BoxGeometry(0.8, 0.8, 0.3),
+    new THREE.MeshStandardMaterial({
+        color: 0x2a2a2a,
+        metalness: 0.8,
+        roughness: 0.4
+    })
+);
+mountPlate.position.set(0, 0, 0);
+cameraGroup.add(mountPlate);
+
+// Camera body (main housing)
+const cameraBody = new THREE.Mesh(
+    new THREE.BoxGeometry(1.2, 0.8, 1.5),
+    new THREE.MeshStandardMaterial({
+        color: 0xffffff, // White security camera
+        metalness: 0.6,
+        roughness: 0.5
+    })
+);
+cameraBody.position.set(0, 0, 0.9); // Body extends outward
+cameraGroup.add(cameraBody);
+
+// Camera lens (large visible lens facing outward)
+const cameraLens = new THREE.Mesh(
+    new THREE.CylinderGeometry(0.5, 0.5, 0.3, 16),
+    new THREE.MeshStandardMaterial({
+        color: 0x1a1a1a, // Dark lens glass
+        metalness: 0.9,
+        roughness: 0.1,
+        emissive: 0x330000,
+        emissiveIntensity: 0.2
+    })
+);
+cameraLens.rotation.x = Math.PI / 2; // Face outward (horizontal)
+cameraLens.position.set(0, 0, 1.7);
+cameraGroup.add(cameraLens);
+
+// Red recording indicator LED
+const recordingLED = new THREE.Mesh(
+    new THREE.SphereGeometry(0.15, 12, 12),
+    new THREE.MeshStandardMaterial({
+        color: 0xff0000,
+        emissive: 0xff0000,
+        emissiveIntensity: 1.5
+    })
+);
+recordingLED.position.set(0.5, 0.3, 1.5);
+cameraGroup.add(recordingLED);
+
+// Blinking LED animation (added to ship for animate loop)
+cameraGroup.userData.recordingLED = recordingLED;
+
+// Camera sun shield (top cover)
+const sunShield = new THREE.Mesh(
+    new THREE.BoxGeometry(1.4, 0.2, 1.2),
+    new THREE.MeshStandardMaterial({
+        color: 0x2a2a2a,
+        metalness: 0.7,
+        roughness: 0.5
+    })
+);
+sunShield.position.set(0, 0.6, 1);
+cameraGroup.add(sunShield);
+
+// Position camera at bridge front-right corner (top level)
+// Bridge is at x=72, y=42 (top), z=10 (right front corner)
+cameraGroup.position.set(84, 42, 10); // Exact front-right corner position
+cameraGroup.rotation.y = Math.PI / 4; // Face outward-right (45° angle)
+
+// Make entire camera group clickable
+cameraGroup.userData = { type: 'camera' };
+cameraGroup.traverse((child) => {
+    if (child.isMesh) {
+        child.userData = { type: 'camera' }; // Tag all parts
+        raycasterObjects.push(child); // Make all parts clickable
+    }
+});
+
+ship.add(cameraGroup);
+console.log('📹 Realistic security camera added at bridge front-right corner (84, 42, 10)');
+
+}
+
+        function onWindowResize() {
+            camera.aspect = window.innerWidth / window.innerHeight;
+            camera.updateProjectionMatrix();
+            renderer.setSize(window.innerWidth, window.innerHeight);
+            composer.setSize(window.innerWidth, window.innerHeight);
+        }
+
+        function animate() {
+            requestAnimationFrame(animate);
+
+            const time = clock.getElapsedTime();
+
+            // Adaptive Performance Monitor
+            performanceMonitor.frameCount++;
+            if (performanceMonitor.frameCount % performanceMonitor.checkInterval === 0) {
+                const currentTime = performance.now();
+                const deltaTime = currentTime - performanceMonitor.lastTime;
+                performanceMonitor.fps = Math.round(1000 * performanceMonitor.checkInterval / deltaTime);
+                performanceMonitor.lastTime = currentTime;
+
+                // Quality locked at HIGH - no FPS overlay
+            }
+
+            // Water animation
+            if (water) {
+                water.material.uniforms['time'].value = time * 0.4;
+            }
+
+            // Enhanced ship motion (smooth and realistic)
+            if (ship) {
+                // Target values for smooth ship motion
+                const targetX = Math.sin(time * 0.25) * 0.006;
+                const targetZ = Math.sin(time * 0.3) * 0.008;
+                const targetY = Math.sin(time * 0.4) * 0.5 + Math.cos(time * 0.25) * 0.3;
+
+                // Lerp (interpolate) for ultra-smooth motion
+                ship.rotation.x += (targetX - ship.rotation.x) * 0.08;
+                ship.rotation.z += (targetZ - ship.rotation.z) * 0.08;
+                ship.position.y += (targetY - ship.position.y) * 0.08;
+
+                // Optimized blinking navigation lights + camera LED
+                if (performanceMonitor.frameCount % 10 === 0) {
+                    const blinkSpeed = Math.sin(time * 3) > 0 ? 1 : 0.3;
+                    ship.traverse((obj) => {
+                        if (obj.isPointLight && obj.userData.baseIntensity) {
+                            obj.intensity = obj.userData.baseIntensity * blinkSpeed;
+                        }
+                        // Camera LED blink (slower)
+                        if (obj.userData.recordingLED) {
+                            const led = obj.userData.recordingLED;
+                            led.material.emissiveIntensity = Math.sin(time * 2) > 0 ? 1.5 : 0.5;
+                        }
+                    });
+                }
+            }
+
+            controls.update();
+            
+            // Use composer for visual effects (adaptive quality)
+            composer.render();
+        }
+
+        // Toggle Auto-Rotate Function
+        
+
+        // Initialize everything
+        init();
+        
+        // Set button to ON state after page loads
+        
+        // Camera view functions - ROOM KE ANDAR SE MANUAL CONTROL
+        function viewCaptainCabin() {
+    // Position inside left-front corner for full bed/desk/bathroom view
+    camera.position.set(
+        72 - 4, // Inside left wall (68, angled to see all)
+        33 + 4, // Eye level in taller room (37)
+        -8 + 3  // Inside back wall ( -5, front view)
+    );
+    controls.target.set(72, 33 + 4, -8); // Room center
+    controls.minDistance = 50; // FIXED: Close zoom for desk/lamp details
+    controls.maxDistance = 65; // FIXED: Contain to room size (~12x10 diag)
+    controls.zoomSpeed = 1.5;
+    controls.dampingFactor = 0.05;
+    controls.maxPolarAngle = Math.PI * 0.95; // Full inside orbit
+    controls.update();
+}
+
+        function viewMessHall() {
+    // Position inside near right-front entrance for full tables/chairs view
+    camera.position.set(
+        20 + 8, // Inside right wall (28, sees all 3 tables/chairs)
+        5 + 7, // Eye level in taller room (12)
+        0 + 6  // Inside front wall (6, angled view)
+    );
+    controls.target.set(20, 5 + 4.5, 0); // Room center
+    controls.minDistance = 50; // FIXED: Close zoom for chair details
+    controls.maxDistance = 75; // FIXED: Contain to room size (~20x15 diag)
+    controls.zoomSpeed = 1.5; 
+    controls.dampingFactor = 0.05;
+    controls.maxPolarAngle = Math.PI * 0.95; // Full inside orbit
+    controls.update();
+     
+}
+
+       
+
+        function viewExterior() {
+    camera.position.set(280, 90, 220);
+    controls.target.set(0, 12, 0);
+    controls.minDistance = 200;    // Ship ke close ja sako
+    controls.maxDistance = 400;   // Bahut door se dekh sako
+    controls.maxPolarAngle = Math.PI / 2.1;  // Exterior ke liye limit
+    controls.update();
+}
+        // Make functions globally accessible
+        window.viewCaptainCabin = viewCaptainCabin;
+        window.viewMessHall = viewMessHall;
+        window.viewEngineRoom = viewEngineRoom;
+        window.viewExterior = viewExterior;
+
+        // Embed mode for dashboard iframe
+        if (new URLSearchParams(location.search).has('embed')) {
+            document.body.classList.add('embed-mode');
+        }
+
+        window.addEventListener('message', (event) => {
+            const view = event?.data?.view;
+            if (view === 'exterior' && typeof viewExterior === 'function') viewExterior();
+            if (view === 'engine' && typeof viewEngineRoom === 'function') viewEngineRoom();
+            if (view === 'cabin' && typeof viewCaptainCabin === 'function') viewCaptainCabin();
+            if (view === 'mess' && typeof viewMessHall === 'function') viewMessHall();
+            if (view === 'deck' && typeof viewExterior === 'function') {
+                camera.position.set(0, 220, 40);
+                controls.target.set(0, 20, 0);
+                controls.minDistance = 80;
+                controls.maxDistance = 350;
+                controls.maxPolarAngle = Math.PI / 2.05;
+                controls.update();
+            }
+        });
+
+        // NEW: Cleanup on window unload (stop stream if active)
+        window.addEventListener('beforeunload', () => {
+            if (currentStreamUrl) {
+                const streamId = currentStreamUrl.split('/')[3]; // e.g., 'ship_camera_123'
+                fetch('/api/stop-stream', { 
+                    method: 'POST', 
+                    body: JSON.stringify({ streamId: streamId }), 
+                    headers: { 'Content-Type': 'application/json' }
+                }).catch(err => console.error('Cleanup stream error:', err));
+            }
+        });
+        
+    </script>
+</body>
+</html>
