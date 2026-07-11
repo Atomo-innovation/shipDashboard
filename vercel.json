@@ -1,4 +1,4 @@
 {
   "installCommand": "echo skip-install",
-  "buildCommand": "mkdir -p .vercel/output/static && cp -R public/. .vercel/output/static/ && node -e \"require('fs').writeFileSync('.vercel/output/config.json', JSON.stringify({version:3,routes:[{src:'/api/(.*)',dest:'/api/$1'},{handle:'filesystem'},{src:'/twin',dest:'/three_realistic.html'}]}))\""
+  "buildCommand": "node build-vercel.js"
 }
