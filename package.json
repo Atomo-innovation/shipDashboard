@@ -1,14 +1,11 @@
 {
-  "name": "ship_digitaltwin",
+  "name": "ship-dashboard",
   "version": "1.0.0",
-  "main": "server.js",
+  "private": true,
   "scripts": {
     "start": "node server.js",
     "dev": "node server.js"
   },
-  "keywords": [],
-  "author": "",
-  "license": "ISC",
   "description": "Ship digital twin dashboard — static UI on Vercel, live camera via local Node server",
   "dependencies": {
     "cors": "^2.8.5",

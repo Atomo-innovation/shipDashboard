@@ -3,40 +3,33 @@ const http = require('http');
 const path = require('path');
 const cors = require('cors');
 const fs = require('fs');
-const { spawn } = require('child_process'); // For FFmpeg
+const { spawn } = require('child_process');
 
 const app = express();
 const server = http.createServer(app);
+const PUBLIC_DIR = path.join(__dirname, 'public');
 
-// Middleware
 app.use(cors());
 app.use(express.json());
-app.use(express.static(path.join(__dirname))); // Serve three.html etc.
+app.use(express.static(PUBLIC_DIR));
 
-// RTSP to HLS Streaming (Office se copied & simplified)
-const activeStreams = new Map(); // {streamId: {url, startTime, ffmpegProcess, streamDir}}
+const activeStreams = new Map();
 
-//
-
-// Start Stream API
 app.post('/api/start-stream', async (req, res) => {
-  const { rtspUrl = 'rtsp://admin:admin123456@192.168.1.10:8554/profile0' } = req.body; // Default corner camera RTSP
+  const { rtspUrl = 'rtsp://admin:admin123456@192.168.1.10:8554/profile0' } = req.body;
   if (!rtspUrl) {
     return res.status(400).json({ success: false, message: 'RTSP URL required' });
   }
 
   try {
-    // Use FIXED stream ID for single camera
     const streamId = 'ship_corner_camera';
-    
-    // Check if already running
+
     if (activeStreams.has(streamId)) {
       console.log(`📹 Stream already running: ${streamId}`);
-      const existingStream = activeStreams.get(streamId);
-      return res.json({ 
-        success: true, 
+      return res.json({
+        success: true,
         streamUrl: `/api/stream/${streamId}/index.m3u8`,
-        message: 'Stream already active' 
+        message: 'Stream already active',
       });
     }
     const streamDir = path.join(__dirname, 'streams', streamId);
@@ -46,11 +39,6 @@ app.post('/api/start-stream', async (req, res) => {
 
     console.log(`📹 Starting ship camera stream: ${streamId} from ${rtspUrl.replace(/:[^:@]+@/, ':****@')}`);
 
-    //
-
-    //
-
-    // ✅ ULTRA-LOW LATENCY FFmpeg (2-3 sec delay)
     let ffmpegFailed = false;
     const ffmpegProcess = spawn('ffmpeg', [
       '-rtsp_transport', 'tcp',
@@ -70,7 +58,7 @@ app.post('/api/start-stream', async (req, res) => {
       '-tune', 'zerolatency',
       '-preset', 'ultrafast',
       '-fflags', '+genpts',
-      `${streamDir}/index.m3u8`
+      `${streamDir}/index.m3u8`,
     ], { stdio: ['pipe', 'pipe', 'pipe'] });
 
     ffmpegProcess.on('error', (err) => {
@@ -91,9 +79,6 @@ app.post('/api/start-stream', async (req, res) => {
     });
 
     activeStreams.set(streamId, { url: rtspUrl, startTime: Date.now(), ffmpegProcess, streamDir, failed: false });
-
-    // ✅ No delay check - immediate response
-
     res.json({ success: true, streamUrl: `/api/stream/${streamId}/index.m3u8`, message: 'Stream started (ready in 1s)' });
   } catch (error) {
     console.error('❌ Start-stream error:', error);
@@ -101,12 +86,10 @@ app.post('/api/start-stream', async (req, res) => {
   }
 });
 
-// Stop Stream API
 app.post('/api/stop-stream', (req, res) => {
-  const { streamId = 'ship_corner_camera' } = req.body; // ✅ FIX: Add default value
-  
-  console.log(`🛑 Stop request received for: ${streamId}`); // ✅ Debug log
-  
+  const { streamId = 'ship_corner_camera' } = req.body;
+  console.log(`🛑 Stop request received for: ${streamId}`);
+
   if (activeStreams.has(streamId)) {
     const stream = activeStreams.get(streamId);
     if (stream.ffmpegProcess && !stream.ffmpegProcess.killed) {
@@ -125,7 +108,6 @@ app.post('/api/stop-stream', (req, res) => {
   res.json({ success: true });
 });
 
-// Serve m3u8 Playlist
 app.get('/api/stream/:streamId/index.m3u8', (req, res) => {
   const { streamId } = req.params;
   if (!activeStreams.has(streamId)) {
@@ -150,7 +132,6 @@ app.get('/api/stream/:streamId/index.m3u8', (req, res) => {
   });
 });
 
-// Serve TS Segments
 app.get('/api/stream/:streamId/:segment', (req, res) => {
   const { streamId, segment } = req.params;
   if (!activeStreams.has(streamId)) {
@@ -175,25 +156,21 @@ app.get('/api/stream/:streamId/:segment', (req, res) => {
   });
 });
 
-// Serve main dashboard
 app.get('/', (req, res) => {
-  res.sendFile(path.join(__dirname, 'dashboard.html'));
+  res.sendFile(path.join(PUBLIC_DIR, 'dashboard.html'));
 });
 
-// Direct access to 3D twin
 app.get('/twin', (req, res) => {
-  res.sendFile(path.join(__dirname, 'three_realistic.html'));
+  res.sendFile(path.join(PUBLIC_DIR, 'three_realistic.html'));
 });
 
-// Cleanup on shutdown
 process.on('SIGINT', () => {
   console.log('\n🛑 Shutting down...');
-  activeStreams.forEach((stream, streamId) => {
+  activeStreams.forEach((stream) => {
     if (stream.ffmpegProcess && !stream.ffmpegProcess.killed) {
       stream.ffmpegProcess.kill('SIGINT');
     }
-    const streamDir = path.join(__dirname, 'streams', streamId);
-    if (fs.existsSync(streamDir)) fs.rmSync(streamDir, { recursive: true, force: true });
+    if (fs.existsSync(stream.streamDir)) fs.rmSync(stream.streamDir, { recursive: true, force: true });
   });
   activeStreams.clear();
   server.close(() => {
@@ -202,11 +179,8 @@ process.on('SIGINT', () => {
   });
 });
 
-// Start Server
 const PORT = process.env.PORT || 3006;
 server.listen(PORT, () => {
   console.log(`🚀 Ship Camera Server on http://localhost:${PORT}`);
   console.log(`📹 Stream API ready. Use RTSP: rtsp://your-corner-camera`);
 });
-
-

@@ -1,16 +1,17 @@
 # shipDashboard
 
-Ship digital twin monitoring dashboard (vibration, fire/smoke, 3D twin).
+Ship digital twin monitoring dashboard.
 
-## Deploy on Vercel
+## Vercel
 
-1. Import this GitHub repo in [Vercel](https://vercel.com/new)
-2. Framework Preset: **Other** (leave build command empty)
-3. Deploy
+Static files live in `public/`. Push to GitHub and redeploy on Vercel.
 
-Dashboard UI works on Vercel. Live RTSP camera needs the local server (FFmpeg cannot run on Vercel serverless).
+- Framework Preset: **Other**
+- Build Command: leave empty / `exit 0`
+- Output Directory: **`public`**
+- Install Command: can leave empty
 
-## Local (with camera stream)
+## Local (camera + FFmpeg)
 
 ```bash
 npm install
