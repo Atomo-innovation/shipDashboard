@@ -1,18 +1,6 @@
 {
-  "buildCommand": "exit 0",
   "outputDirectory": "public",
-  "installCommand": "echo 'skip install'",
-  "framework": null,
   "rewrites": [
-    { "source": "/", "destination": "/dashboard.html" },
     { "source": "/twin", "destination": "/three_realistic.html" }
-  ],
-  "headers": [
-    {
-      "source": "/assets/(.*)",
-      "headers": [
-        { "key": "Cache-Control", "value": "public, max-age=31536000, immutable" }
-      ]
-    }
   ]
 }

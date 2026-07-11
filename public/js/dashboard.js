@@ -163,8 +163,8 @@
   function setDeckMaps(mode) {
     const img =
       mode === "smoke"
-        ? 'url("/assets/ship-deck-schematic-smoke.png?v=1")'
-        : 'url("/assets/ship-deck-schematic.png?v=8")';
+        ? 'url("assets/ship-deck-schematic-smoke.png?v=1")'
+        : 'url("assets/ship-deck-schematic.png?v=8")';
 
     ["#deck-map-overview", "#deck-map-full"].forEach((sel) => {
       const el = $(sel);

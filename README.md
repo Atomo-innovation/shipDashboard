@@ -1,21 +1,30 @@
 # shipDashboard
 
-Ship digital twin monitoring dashboard.
+Same dashboard locally and on Vercel (static files in `public/`).
 
-## Vercel
+## Fix Vercel (important)
 
-Static files live in `public/`. Push to GitHub and redeploy on Vercel.
+`ship-dashboard.vercel.app` is a **different Vite app** — not this repo.
 
-- Framework Preset: **Other**
-- Build Command: leave empty / `exit 0`
-- Output Directory: **`public`**
-- Install Command: can leave empty
+Deploy **this** GitHub repo fresh:
 
-## Local (camera + FFmpeg)
+1. Open https://vercel.com/new
+2. Import **`Atomo-innovation/shipDashboard`**
+3. Settings:
+   - Framework Preset: **Other**
+   - Root Directory: `.` (leave default)
+   - Build Command: **leave empty**
+   - Output Directory: **`public`**
+   - Install Command: **leave empty**
+4. Click **Deploy**
+
+You will get a new URL like `shipdashboard-xxxxx.vercel.app` — that one will match local.
+
+## Local
 
 ```bash
 npm install
 npm start
 ```
 
-Open http://localhost:3006
+http://localhost:3006

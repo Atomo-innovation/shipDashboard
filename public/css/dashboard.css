@@ -1084,7 +1084,7 @@ a {
   box-sizing: border-box;
   border-radius: 10px;
   background-color: #141416;
-  background-image: url("/assets/ship-deck-schematic-smoke.png?v=1");
+  background-image: url("../assets/ship-deck-schematic-smoke.png?v=1");
   background-repeat: no-repeat;
   background-position: center center;
   background-size: contain;
