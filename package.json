@@ -5,7 +5,7 @@
   "scripts": {
     "start": "node local-server.js",
     "dev": "node local-server.js",
-    "build": "rm -rf dist && mkdir dist && cp -R public/. dist/"
+    "build": "mkdir -p .vercel/output/static && rm -rf .vercel/output/static/* && cp -R public/. .vercel/output/static/ && printf '%s\\n' '{\"version\":3,\"routes\":[{\"handle\":\"filesystem\"},{\"src\":\"/twin\",\"dest\":\"/three_realistic.html\"}]}' > .vercel/output/config.json"
   },
   "description": "Ship digital twin dashboard",
   "dependencies": {

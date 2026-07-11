@@ -1,36 +1,29 @@
 # shipDashboard
 
-## Vercel (must match local UI)
+## Fix Vercel "No entrypoint found in output directory"
 
-This project deploys **only** the `public/` folder (copied to `dist/` at build time).  
-Express (`local-server.js`) is **not** used on Vercel — that was why CSS was missing.
+That error means Vercel thought this was a **Node server**. It is a **static site**.
 
-### Deploy / fix existing project
+### In Vercel project settings (required)
 
-1. Vercel → your project → **Settings → General → Build & Development Settings**
-2. Click **Override** and set:
-   - **Framework Preset:** Other
-   - **Build Command:** `rm -rf dist && mkdir dist && cp -R public/. dist/`
-   - **Output Directory:** `dist`
-   - **Install Command:** `echo skip-install`
-3. **Deployments → … → Redeploy** (uncheck “Use existing Build Cache”)
+**Settings → Build & Development Settings** — turn **OFF** all overrides, OR set:
 
-### Verify after deploy
+| Setting | Value |
+|--------|--------|
+| Framework Preset | **Other** |
+| Build Command | *(leave empty — use vercel.json)* |
+| Output Directory | **CLEAR / empty** (do NOT set `dist` or `public`) |
+| Install Command | *(leave empty — use vercel.json)* |
 
-Open these on your Vercel domain — both must be **200**, not 404:
+Then **Redeploy** with **Build Cache disabled**.
 
-- `https://YOUR-APP.vercel.app/`
-- `https://YOUR-APP.vercel.app/css/dashboard.css`
-- `https://YOUR-APP.vercel.app/js/dashboard.js`
-- `https://YOUR-APP.vercel.app/assets/atomologo.png`
+### What the build does
 
-If CSS is 404, Output Directory is still wrong in project settings.
+It writes static files into `.vercel/output/static` (Vercel Build Output API) so HTML/CSS/JS deploy correctly — no Node `server.js` entrypoint needed.
 
-## Local (with camera)
+## Local
 
 ```bash
 npm install
 npm start
 ```
-
-http://localhost:3006

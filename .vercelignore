@@ -3,6 +3,7 @@ node_modules
 streams
 .git
 dist
+.vercel
 *.bak
 *.log
 .env
