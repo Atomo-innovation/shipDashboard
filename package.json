@@ -3,10 +3,11 @@
   "version": "1.0.0",
   "private": true,
   "scripts": {
-    "start": "node server.js",
-    "dev": "node server.js"
+    "start": "node local-server.js",
+    "dev": "node local-server.js",
+    "build": "rm -rf dist && mkdir dist && cp -R public/. dist/"
   },
-  "description": "Ship digital twin dashboard — static UI on Vercel, live camera via local Node server",
+  "description": "Ship digital twin dashboard",
   "dependencies": {
     "cors": "^2.8.5",
     "express": "^5.2.1"
